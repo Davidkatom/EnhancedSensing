@@ -11,6 +11,7 @@ def cm(N,m):
 def s_p(N, m):
     J = N//2
     return np.sqrt((J-m)*(J+m+1))
+
 def s_m(N, m):
     J = N//2
     return np.sqrt((J+m)*(J-m+1))
@@ -19,6 +20,73 @@ def Sy(N, m):
     return 0.5 * 1j * (s_m(N, m) - s_p(N, m))
 
 N = 10
+total = 0
+A = {}
+B = {}
+
+for m in range(-N//2, N//2 + 1):
+    def safe(x):
+    # turns nan/inf/None into 0.0
+        try:
+            if x is None:
+                return 0.0
+            x = float(x)
+            return x if math.isfinite(x) else 0.0
+        except Exception:
+            return 0.0
+
+    try:
+        cmp2 = cm(N, m+2)
+    except:
+        cmp2 = 0
+    try:
+        cmm2 = cm(N, m-2)
+    except:
+        cmm2 = 0
+    try:
+        cm0 = cm(N, m)    
+    except:
+        cm0 = 0
+    try:
+        cmp1 = cm(N, m+1)
+    except:
+        cmp1 = 0
+    try:
+        cmm1 = cm(N, m-1)
+    except:
+        cmm1 = 0
+
+    sm2 = safe(s_m(N, m+2))
+    sm1 = safe(s_m(N, m+1))
+    sp1 = safe(s_p(N, m-1))
+    sp2 = safe(s_p(N, m-2))
+    sm0 = safe(s_m(N, m))
+    sp0 = safe(s_p(N, m))
+    
+    
+    a = sm2*sm1*cmp2*cm0 
+    b = sp1*sp2*cmm2*cm0
+    A[m] = a
+    B[m] = b
+    # c = cm0*cm0*sm0*sp1 + cm0*cm0*sp0*sm1 
+    # total += a + b - c
+    total += b
+    print(f"m = {m}: b = {b}")
+print(total)
+# used_j = set()
+# for i, val_a in A.items():
+#     if val_a != 0:
+#         for j, val_b in B.items():
+#             if j not in used_j and math.isclose(val_a, val_b):
+#                 print(f"{val_a} = {val_b}, ({i}, {j})")
+#                 used_j.add(j)
+#                 break
+
+
+plt.scatter(range(-N//2, N//2 + 1), B.values())
+gausian = np.exp((-np.linspace(-N//2, N//2, N+1))**2)
+plt.plot(range(-N//2, N//2 + 1), gausian)
+plt.show()
 dim = N + 1
 Sy_matrix = np.zeros((dim, dim), dtype=complex)
 for i in range(dim):
@@ -47,11 +115,12 @@ g_sym = sp.symbols('g', real=True)
 J_sym = sp.Rational(1,2)*N_sym
 
 def cm_sym(N, m, t=0):
-    return (1 / 2**(N/2)) * sp.sqrt(sp.binomial(N, N/2 + m).rewrite(sp.factorial)) * sp.exp(-t * m * m * g_sym)
+    return (1 / 2**(N/2)) * sp.sqrt(sp.binomial(N, N/2 + m)) * sp.exp(-t * m * m * g_sym)
 
 def s_p_sym(N, m):
     J = N/2
     return sp.sqrt((J-m)*(J+m+1))
+
 
 def s_m_sym(N, m):
     J = N/2
@@ -68,6 +137,8 @@ term2 = cm_sym(N_sym, m_sym - 2) * s_p_sym(N_sym, m_sym - 2) * s_p_sym(N_sym, m_
 term3_1 = cm_sym(N_sym, m_sym) * s_m_sym(N_sym, m_sym) * s_p_sym(N_sym, m_sym - 1)
 term3_2 = cm_sym(N_sym, m_sym) * s_p_sym(N_sym, m_sym) * s_m_sym(N_sym, m_sym + 1)
 term3 = - term3_1 - term3_2
+
+Sp2_term = cm_sym(N_sym, m_sym - 2)* cm_sym(N_sym, m_sym) * s_p_sym(N_sym, m_sym - 2) * s_p_sym(N_sym, m_sym - 1)
 
 term = (term1 + term2 + term3) * cm_sym(N_sym, m_sym)
 exp_sy_2_sym = - 0.25 * sp.Sum(
@@ -89,7 +160,7 @@ latex_sy = sp.latex(sum_sy_simplified)
 latex_sy2 = sp.latex(exp_sy_2_sym)
 latex_sy_n10 = sp.latex(sum_sy.subs(N_sym, 10).doit())
 latex_sy2_n10 = sp.latex(exp_sy_2_sym.subs(N_sym, 10).doit())
-latex_sy2_term = sp.latex(term.doit().simplify())
+latex_Sp2_term = sp.latex(Sp2_term.doit().simplify())
 
 print("Symbolic Results (LaTeX):")
 print(f"<Sy>: {latex_sy}")
@@ -115,7 +186,7 @@ try:
         r"$\langle S_y \rangle_{N=10} = " + latex_sy_n10 + r"$" + "\n\n" +
         r"$\langle S_y^2 \rangle_{N=10} = " + latex_sy2_n10 + r"$" + "\n\n" +
         r"$\bf{Term}$" + "\n\n" +
-        r"$" + latex_sy2_term + r"$"
+        r"$" + latex_Sp2_term + r"$"
     )
     
     # We use a text box. Matplotlib's mathtext parser supports a subset of TeX.

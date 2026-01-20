@@ -7,21 +7,21 @@ from scipy.linalg import expm
 
 def main():
     # Parameters
-    N = 12  # Number of bath spins
+    N = 10  # Number of bath spins
     J_bath = N / 2.0 # Total spin of the bath
     
     # Physical Parameters
     # Using same values as previous script where applicable
-    J_coupling = 3.0   # J in Hamiltonian
-    Omega = 1.0 # System Rabi frequency
+    J_coupling = 1.0   # J in Hamiltonian
+    Omega = 0.0 # System Rabi frequency
     omega = 0.0  # Bath splitting
     
     # Hamiltonian term prefactor for interaction: J^2 / Omega
     # H_int = (J^2 / Omega) * S_x * I_z^2
-    g_int = (J_coupling**2) / Omega
+    g_int = (J_coupling**2) / 1.0 #switch to Omega
 
     # Time parameters
-    t_max = 0.5
+    t_max = 3
     steps = 200
     times = np.linspace(0, t_max, steps)
 
@@ -171,12 +171,6 @@ def main():
         mean_Iz2_list.append(4*mean_Iz2/N)
         mean_Iyz_list.append(4*mean_Iyz_sym/N)
         
-        # # ---- optimal squeezing angle ----
-        # if abs(mean_Ix) > 1e-12:
-        #     theta_opt = np.arctan(mean_Iy / mean_Ix)
-        # else:
-        #     theta_opt = np.nan
-        # theta_opt_list.append(theta_opt)
 
         theta_opt = np.tan(2.0 * cov/ (dIy2 - dIz2))
         theta_opt_list.append(theta_opt)
