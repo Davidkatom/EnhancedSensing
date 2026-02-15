@@ -7,7 +7,7 @@ from scipy.sparse import csr_matrix, kron, identity
 def main():
     # Parameters
     N = 10  # Reduced to 10 for computational basis (2^11 = 2048 states)
-    J = 10.0
+    J = 2.0
     Omega = 10.0
     omega = 1.0
     
