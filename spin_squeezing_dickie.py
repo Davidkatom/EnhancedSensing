@@ -49,13 +49,14 @@ def get_total_operators(N):
     I_x = np.kron(id_S, Jx_B)
     I_y = np.kron(id_S, Jy_B)
     I_z = np.kron(id_S, Jz_B)
+    I_i = np.kron(id_S, id_B)
     
     I_p = np.kron(id_S, Jp_B)
     
     return {
         'S_x': S_x, 'S_z': S_z,
         'I_x': I_x, 'I_y': I_y, 'I_z': I_z,
-        'I_p': I_p,
+        'I_p': I_p, 'I_i': I_i,
         'm_values': m_values
     }
 
@@ -79,11 +80,12 @@ def get_hamiltonian(ops, Omega, omega, g_int):
     S_x = ops['S_x']
     I_x = ops['I_x']
     I_z = ops['I_z']
+    I_i = ops['I_i']
     
     I_z2 = I_z @ I_z
     
     # H = (Omega/2) S_x + omega I_x + g_int * S_x * I_z^2
-    H = (Omega / 2.0) * S_x + omega * I_x + g_int * (S_x @ I_z2)
+    H = (Omega / 2.0) * S_x + omega * I_x + g_int * (I_i @ I_z2)
     return H
 
 def get_psit(H, psi0, t):
