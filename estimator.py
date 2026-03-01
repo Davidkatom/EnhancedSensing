@@ -172,7 +172,7 @@ def run_comparison():
 
     
     # T_total sweep configuration
-    T_TOTAL_SWEEP = np.array([100 , 150, 200, 250, 300])
+    T_TOTAL_SWEEP = np.array([10 , 15, 20, 25, 30])
     N_val = 10  # Fixed N for the sweep
 
     avg_err_naive = []
@@ -198,7 +198,7 @@ def run_comparison():
         times_naive = np.linspace(0, T_MAX, STEPS)
         # opt_time = 2 / (np.sqrt(2 * (N_val - 2)) * J_TRUE**2)
         times_squeezed = np.linspace(0, T_squeezed, STEPS)
-        times_squeezed = np.array([0.06]) #debug
+        # times_squeezed = np.array([0.06]) #debug
         probs_naive = get_naive_probs(N_val, times_naive, J_TRUE) 
         
         # Squeezed: Depends heavily on N
