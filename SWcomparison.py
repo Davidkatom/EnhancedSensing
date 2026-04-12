@@ -5,9 +5,10 @@ import qutip as qt
 # =====================================================================
 # Parameters
 # =====================================================================
-N = 10 # Number of bath spins
-Omega = 10.0  # Transverse field on central spin
+N = 50 # Number of bath spins
+Omega = 10  # Transverse field on central spin
 J = 1.0      # Interaction strength
+gamma = 1.0 # Dephasing rate on central spin
 t_max = 10                # Total simulation time 
 n_steps = 500              # Time steps for calculation
 tlist = np.linspace(0, t_max, n_steps)
@@ -52,12 +53,14 @@ Sz = qt.tensor(si, Jz)
 H1 = Omega * sx_s + J * sz_s * Sz
 
 H2 = Omega * sx_s + (J**2 / (2 * Omega)) * sx_s * (Sz**2)
+# H2 = Omega * sx_s + J * sz_s * Sz
 
 # =====================================================================
 # Initial state
 # =====================================================================
 # Central spin in |+_s> (the +1 eigenstate of sigma_x)
 plus_state_central = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
+# plus_state_central = (qt.basis(2, 1)).unit()
 
 # Bath in |+>^N. In the Dicke basis, this is a spin coherent state pointing along +x
 plus_state_bath = qt.spin_coherent(S_spin, np.pi/2, 0)
@@ -67,30 +70,121 @@ psi0 = qt.tensor(plus_state_central, plus_state_bath)
 # =====================================================================
 # Evolution
 # =====================================================================
+# Dephasing collapse operator on the central spin
+c_ops = [np.sqrt(gamma) * sz_s]
+
 # Observables to calculate expectation values for bath spins
 e_ops = [Sz, Sx, Sy, Sz**2, Sx**2, Sy**2]
 
-res1 = qt.mesolve(H1, psi0, tlist, e_ops=e_ops)
-res2 = qt.mesolve(H2, psi0, tlist, e_ops=e_ops)
+res1 = qt.mesolve(H1, psi0, tlist, c_ops=c_ops, e_ops=e_ops)
+res2 = qt.mesolve(H2, psi0, tlist, c_ops=c_ops, e_ops=e_ops)
+
+# =====================================================================
+# Adiabatic Approximation
+# =====================================================================
+lambda_val = (J**2 / (2 * Omega)) if Omega != 0.0 else 0.0
+
+rho0_bath = plus_state_bath * plus_state_bath.dag()
+rho0_mat = rho0_bath.full()
+
+# Dicke basis states m values (from N/2 down to -N/2)
+m_vals = np.diag((qt.jmat(S_spin, 'z') * 2.0).full())
+n_mat, m_mat = np.meshgrid(m_vals, m_vals, indexing='ij')
+
+e_ops_bath = [Jz, Jx, Jy, Jz**2, Jx**2, Jy**2]
+adiab_expect = np.zeros((len(e_ops_bath), len(tlist)))
+
+for idx, t in enumerate(tlist):
+    # Calculate r_{n,m}(t)
+    r_nm = np.exp(-1 * lambda_val**2 * (n_mat**2 - m_mat**2)**2 / (2*gamma) * t - 1*(lambda_val/Omega) * gamma * (n_mat - m_mat)**2 * t)
+    
+    # Calculate rho_bath(t)
+    rho_t_mat = rho0_mat * r_nm
+    rho_t = qt.Qobj(rho_t_mat, dims=rho0_bath.dims)
+    
+    # Expectation values for the bath
+    for op_idx, op in enumerate(e_ops_bath):
+        adiab_expect[op_idx, idx] = np.real(qt.expect(op, rho_t))
+
+# =====================================================================
+# Analytical Solution 2
+# =====================================================================
+a_param = 1.0 # Set the 'a' parameter from the formula here
+r0 = 1.0
+x0 = 1.0
+
+delta_mat = (J**2 / (2 * Omega)) * (n_mat**2 - m_mat**2) if Omega != 0 else np.zeros_like(n_mat)
+k_mat = a_param * (J**2 / (2 * Omega**2)) * gamma * (n_mat - m_mat)**2 if Omega != 0 else np.zeros_like(n_mat)
+
+# mu derived from the properties of the implied system of ODEs
+mu_mat = 0.5 * np.sqrt((k_mat - 2 * gamma + 0j)**2 - 16 * delta_mat**2 + 0j)
+sol2_expect = np.zeros((len(e_ops_bath), len(tlist)))
+
+for idx, t in enumerate(tlist):
+    cosh_mu_t = np.cosh(mu_mat * t)
+    sinh_mu_t = np.sinh(mu_mat * t)
+    
+    # Safe division for sinh(mu*t) / (2*mu)
+    term2_denom = 2 * mu_mat
+    safe_sinh_over_2mu = np.zeros_like(mu_mat, dtype=np.complex128)
+    nonzero_mask = np.abs(mu_mat) > 1e-12
+    zero_mask = ~nonzero_mask
+    safe_sinh_over_2mu[nonzero_mask] = sinh_mu_t[nonzero_mask] / term2_denom[nonzero_mask]
+    safe_sinh_over_2mu[zero_mask] = t / 2.0
+    
+    term1 = r0 * cosh_mu_t
+    term2 = ((2 * gamma - k_mat) * r0 + 8j * delta_mat * x0) * safe_sinh_over_2mu
+    
+    r_nm_t = np.exp(-(k_mat + 2 * gamma) * t / 2.0) * (term1 + term2)
+    
+    rho_t_mat = rho0_mat * r_nm_t
+    rho_t = qt.Qobj(rho_t_mat, dims=rho0_bath.dims)
+    
+    for op_idx, op in enumerate(e_ops_bath):
+        sol2_expect[op_idx, idx] = np.real(qt.expect(op, rho_t))
+
+# =====================================================================
+# Two Spin Dynamics (Central + 1 Bath Spin)
+# =====================================================================
+# Simulate a single bath spin interacting with the central spin
+sz_s_2q = qt.tensor(sz, si)
+sz_1_2q = qt.tensor(si, sz)
+sx_1_2q = qt.tensor(si, sx)
+sy_1_2q = qt.tensor(si, sy)
+
+H_2q = J * sz_s_2q * sz_1_2q
+c_ops_2q = [np.sqrt(gamma) * sz_s_2q]
+e_ops_2q = [sz_1_2q, sx_1_2q, sy_1_2q]
+
+plus_state_1q = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
+psi0_2q = qt.tensor(plus_state_1q, plus_state_1q) # Both in |+>
+
+res_sq = qt.mesolve(H_2q, psi0_2q, tlist, c_ops=c_ops_2q, e_ops=e_ops_2q)
 
 # =====================================================================
 # Plotting
 # =====================================================================
-fig, axs = plt.subplots(3, 2, figsize=(12, 10), sharex=True)
-fig.suptitle(fr'Bath Spin Dynamics (N={N}, $\Omega={Omega}$, $J={J}$)' + '\n' + r'Initial State: $|+>_s \otimes |+>^N$')
+fig, axs = plt.subplots(3, 3, figsize=(16, 10), sharex=True)
+fig.suptitle(fr'Bath Spin Dynamics (N={N}, $\Omega={Omega}$, $J={J}$, $\gamma={gamma}$)' + '\n' + r'Initial State: $|+>_s \otimes |+>^N$')
 
 # Plot Bath Spin Dynamics
 axs[0, 0].set_title("Expectation Values")
 axs[0, 0].plot(tlist, res1.expect[0], label='Exact', linestyle='-')
 axs[0, 0].plot(tlist, res2.expect[0], label='SW Eff', linestyle='--')
+axs[0, 0].plot(tlist, adiab_expect[0], label='Adiabatic', linestyle=':')
+axs[0, 0].plot(tlist, sol2_expect[0], label='Analytic 2', linestyle='-.')
 axs[0, 0].set_ylabel(r'$\langle S_z \rangle$')
 
 axs[1, 0].plot(tlist, res1.expect[1], label='Exact', linestyle='-')
 axs[1, 0].plot(tlist, res2.expect[1], label='SW Eff', linestyle='--')
+axs[1, 0].plot(tlist, adiab_expect[1], label='Adiabatic', linestyle=':')
+axs[1, 0].plot(tlist, sol2_expect[1], label='Analytic 2', linestyle='-.')
 axs[1, 0].set_ylabel(r'$\langle S_x \rangle$')
 
 axs[2, 0].plot(tlist, res1.expect[2], label='Exact', linestyle='-')
 axs[2, 0].plot(tlist, res2.expect[2], label='SW Eff', linestyle='--')
+axs[2, 0].plot(tlist, adiab_expect[2], label='Adiabatic', linestyle=':')
+axs[2, 0].plot(tlist, sol2_expect[2], label='Analytic 2', linestyle='-.')
 axs[2, 0].set_ylabel(r'$\langle S_y \rangle$')
 axs[2, 0].set_xlabel('Time')
 
@@ -98,16 +192,34 @@ axs[2, 0].set_xlabel('Time')
 axs[0, 1].set_title("Squared Observables")
 axs[0, 1].plot(tlist, res1.expect[3], label='Exact', linestyle='-')
 axs[0, 1].plot(tlist, res2.expect[3], label='SW Eff', linestyle='--')
+axs[0, 1].plot(tlist, adiab_expect[3], label='Adiabatic', linestyle=':')
+axs[0, 1].plot(tlist, sol2_expect[3], label='Analytic 2', linestyle='-.')
 axs[0, 1].set_ylabel(r'$\langle S_z^2 \rangle$')
 
 axs[1, 1].plot(tlist, res1.expect[4], label='Exact', linestyle='-')
 axs[1, 1].plot(tlist, res2.expect[4], label='SW Eff', linestyle='--')
+axs[1, 1].plot(tlist, adiab_expect[4], label='Adiabatic', linestyle=':')
+axs[1, 1].plot(tlist, sol2_expect[4], label='Analytic 2', linestyle='-.')
 axs[1, 1].set_ylabel(r'$\langle S_x^2 \rangle$')
 
 axs[2, 1].plot(tlist, res1.expect[5], label='Exact', linestyle='-')
 axs[2, 1].plot(tlist, res2.expect[5], label='SW Eff', linestyle='--')
+axs[2, 1].plot(tlist, adiab_expect[5], label='Adiabatic', linestyle=':')
+axs[2, 1].plot(tlist, sol2_expect[5], label='Analytic 2', linestyle='-.')
 axs[2, 1].set_ylabel(r'$\langle S_y^2 \rangle$')
 axs[2, 1].set_xlabel('Time')
+
+# Plot Two Qubit Model (Bath Spin 1)
+axs[0, 2].set_title("Single Bath Spin ($Z_s Z_1$)")
+axs[0, 2].plot(tlist, res_sq.expect[0], label='Single Bath Spin', linestyle='-', color='g')
+axs[0, 2].set_ylabel(r'$\langle Z_1 \rangle$')
+
+axs[1, 2].plot(tlist, res_sq.expect[1], label='Single Bath Spin', linestyle='-', color='g')
+axs[1, 2].set_ylabel(r'$\langle X_1 \rangle$')
+
+axs[2, 2].plot(tlist, res_sq.expect[2], label='Single Bath Spin', linestyle='-', color='g')
+axs[2, 2].set_ylabel(r'$\langle Y_1 \rangle$')
+axs[2, 2].set_xlabel('Time')
 
 for ax in axs.flat:
     ax.legend(loc='best')
