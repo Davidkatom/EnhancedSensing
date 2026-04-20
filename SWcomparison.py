@@ -5,8 +5,8 @@ import qutip as qt
 # =====================================================================
 # Parameters
 # =====================================================================
-N = 50 # Number of bath spins
-Omega = 10  # Transverse field on central spin
+N = 10 # Number of bath spins
+Omega = 100  # Transverse field on central spin
 J = 1.0      # Interaction strength
 gamma = 1.0 # Dephasing rate on central spin
 t_max = 10                # Total simulation time 
@@ -71,7 +71,7 @@ psi0 = qt.tensor(plus_state_central, plus_state_bath)
 # Evolution
 # =====================================================================
 # Dephasing collapse operator on the central spin
-c_ops = [np.sqrt(gamma) * sz_s]
+c_ops = [np.sqrt(gamma) * sx_s]
 
 # Observables to calculate expectation values for bath spins
 e_ops = [Sz, Sx, Sy, Sz**2, Sx**2, Sy**2]
