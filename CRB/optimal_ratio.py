@@ -11,23 +11,29 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class SimulationConfig:
     N: int = 10
-    gamma: float = 1
     J_nominal: float = 1.0
     dJ: float = 1e-4
 
     t_min: float = 0.01
     t_max: float = 100.0
-    n_steps: int = 150
+    n_steps: int = 120
 
     omega_min: float = 0.0
     omega_max: float = 50.0
-    n_omegas: int = 60
+    n_omegas: int = 50
 
-    num_model: int = 1  # 1 = exact H1, 2 = effective H2
+    num_model: int = 1   # 1 = exact H1, 2 = effective H2
     qfi_tol: float = 1e-12
     qcrb_eps: float = 1e-15
 
-    output_figure: str = "bath_only_qfi_analysis.png"
+    # Fixed beta; scan gamma directly
+    beta: float = 1.0
+
+    gamma_min: float = 0.05
+    gamma_max: float = 0.25
+    n_gammas: int = 12
+
+    output_figure: str = "min_qcrb_vs_gamma.png"
 
 
 # ============================================================
@@ -35,9 +41,6 @@ class SimulationConfig:
 # ============================================================
 
 def build_spin_operators(N: int):
-    """
-    Build all operators needed for the full central-spin + bath model.
-    """
     S_spin = N / 2.0
     dim_bath = int(2 * S_spin + 1)
 
@@ -67,26 +70,12 @@ def build_spin_operators(N: int):
 
 
 def build_initial_state(S_spin: float) -> qt.Qobj:
-    """
-    Initial state:
-      central spin in |+>
-      bath in spin-coherent state along +x
-    """
     plus_state_central = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
     plus_state_bath = qt.spin_coherent(S_spin, np.pi / 2, 0)
     return qt.tensor(plus_state_central, plus_state_bath)
 
 
 def build_hamiltonian(Omega: float, J: float, N: int, num_model: int) -> qt.Qobj:
-    """
-    Build the numerical Hamiltonian.
-
-    num_model = 1:
-        H1 = Omega * sigma_x + J * sigma_z * S_z
-
-    num_model = 2:
-        H2 = Omega * sigma_x + (J^2 / (2 Omega)) * sigma_x * S_z^2
-    """
     ops = build_spin_operators(N)
     sx_s = ops["sx_s"]
     sz_s = ops["sz_s"]
@@ -112,19 +101,20 @@ def get_bath_density_matrices(
     J: float,
     tlist: np.ndarray,
     N: int = 10,
-    gamma: float = 1.0,
+    beta: float = 1.0,     # coefficient for s_x collapse
+    gamma: float = 0.3,    # coefficient for s_z collapse
     num_model: int = 1,
 ):
-    """
-    Evolve the full state numerically and return the reduced bath
-    density matrices rho_B(t) = Tr_central[rho_full(t)].
-    """
     ops = build_spin_operators(N)
 
     H = build_hamiltonian(Omega, J, N, num_model)
     psi0 = build_initial_state(ops["S_spin"])
 
-    collapse_ops = [np.sqrt(gamma) * ops["sx_s"]]
+    collapse_ops = []
+    if beta > 0:
+        collapse_ops.append(np.sqrt(beta) * ops["sx_s"])
+    if gamma > 0:
+        collapse_ops.append(np.sqrt(gamma) * ops["sz_s"])
 
     result = qt.mesolve(H, psi0, tlist, c_ops=collapse_ops, e_ops=[])
 
@@ -142,21 +132,11 @@ def get_bath_density_matrices(
 # ============================================================
 
 def qfi_from_rho_and_drho(rho: np.ndarray, drho: np.ndarray, tol: float = 1e-12) -> float:
-    r"""
-    Compute mixed-state QFI from rho and d rho / dJ using
-
-        F_Q = 2 \sum_{m,n : \lambda_m + \lambda_n > 0}
-              | <m| drho |n> |^2 / (\lambda_m + \lambda_n)
-
-    where rho = sum_n lambda_n |n><n|.
-    """
-    # Hermitize numerically
     rho = 0.5 * (rho + rho.conj().T)
     drho = 0.5 * (drho + drho.conj().T)
 
     evals, evecs = np.linalg.eigh(rho)
 
-    # Clean tiny negative eigenvalues from numerical noise
     evals = np.real(evals)
     evals[np.abs(evals) < tol] = 0.0
 
@@ -181,10 +161,6 @@ def compute_bath_qfi_trajectory(
     dJ: float,
     tol: float = 1e-12,
 ):
-    """
-    Given bath density matrices at J+dJ and J-dJ, compute the bath-only
-    QFI as a function of time.
-    """
     n_times = len(bath_rhos_plus)
     qfi_t = np.zeros(n_times)
 
@@ -201,124 +177,25 @@ def compute_bath_qfi_trajectory(
 
 
 # ============================================================
-# Plotting
+# Gamma scan (beta fixed at 1)
 # ============================================================
 
-def plot_qfi_results(
-    tlist: np.ndarray,
-    omega_list: np.ndarray,
-    qfi_matrix: np.ndarray,
-    qcrb_matrix: np.ndarray,
-    min_qcrb_per_omega: np.ndarray,
-    optimal_times: np.ndarray,
-    output_figure: str,
-):
-    """
-    Plot:
-      1) bath-only QCRB heatmap  (with t*(Omega) overlay)
-      2) minimum bath-only QCRB vs Omega
-      3) optimal time t*(Omega) vs Omega
-    """
-    optimal_idx = np.argmin(min_qcrb_per_omega)
-    optimal_omega = omega_list[optimal_idx]
-
-    fig, axes = plt.subplots(1, 3, figsize=(20, 5))
-
-    vmax_qcrb = np.percentile(min_qcrb_per_omega, 95) * 5.0
-
-    im = axes[0].pcolormesh(
-        tlist,
-        omega_list,
-        qcrb_matrix,
-        shading="auto",
-        cmap="viridis",
-        vmax=vmax_qcrb,
-    )
-    # Overlay the optimal time trajectory on the heatmap
-    axes[0].plot(
-        optimal_times,
-        omega_list,
-        color="red",
-        linewidth=1.5,
-        linestyle="--",
-        label=r"$t^*(\Omega)$",
-    )
-    axes[0].set_xlabel("Time (t)")
-    axes[0].set_ylabel(r"Transverse Field ($\Omega$)")
-    axes[0].set_title("Bath-only Quantum Cramér-Rao Bound")
-    axes[0].legend(loc="upper right")
-    fig.colorbar(im, ax=axes[0])
-
-    axes[1].plot(
-        omega_list,
-        min_qcrb_per_omega,
-        marker="o",
-        linestyle="-",
-        label="Min bath-only QCRB",
-    )
-    axes[1].axvline(
-        optimal_omega,
-        linestyle="--",
-        color="red",
-        label=fr"Optimal $\Omega$ = {optimal_omega:.2f}",
-    )
-    axes[1].set_xlabel(r"Transverse Field ($\Omega$)")
-    axes[1].set_ylabel(r"Min over $t$ of QCRB")
-    axes[1].set_title("Minimum bath-only QCRB vs Omega")
-    axes[1].set_yscale("log")
-    axes[1].grid(True, linestyle=":")
-    axes[1].legend()
-
-    # --- Third panel: optimal time t*(Omega) ---
-    axes[2].plot(
-        omega_list,
-        optimal_times,
-        marker="s",
-        linestyle="-",
-        color="darkorange",
-        label=r"$t^*(\Omega)$",
-    )
-    axes[2].axvline(
-        optimal_omega,
-        color="red",
-        linestyle="--",
-        label=fr"Optimal $\Omega$ = {optimal_omega:.2f}",
-    )
-    axes[2].set_xlabel(r"Transverse Field ($\Omega$)")
-    axes[2].set_ylabel(r"Optimal time $t^*$")
-    axes[2].set_title(r"Optimal measurement time $t^*$ vs $\Omega$")
-    axes[2].grid(True, linestyle=":")
-    axes[2].legend()
-
-    plt.tight_layout()
-    plt.savefig(output_figure, bbox_inches="tight")
-    plt.show()
-
-
-# ============================================================
-# Main
-# ============================================================
-
-def main():
-    cfg = SimulationConfig()
+def compute_min_qcrb_for_gamma(cfg: SimulationConfig, gamma: float):
+    beta = cfg.beta
 
     tlist = np.linspace(cfg.t_min, cfg.t_max, cfg.n_steps)
     omega_list = np.linspace(cfg.omega_min, cfg.omega_max, cfg.n_omegas)
 
     qfi_matrix = np.zeros((len(omega_list), len(tlist)))
 
-    print(f"Computing bath-only QFI for {len(omega_list)} values of Omega...")
-
     for i, Omega in enumerate(omega_list):
-        if (i + 1) % 5 == 0 or i == 0:
-            print(f"Processed {i + 1}/{len(omega_list)} Omega values")
-
         bath_rhos_plus = get_bath_density_matrices(
             Omega=Omega,
             J=cfg.J_nominal + cfg.dJ,
             tlist=tlist,
             N=cfg.N,
-            gamma=cfg.gamma,
+            beta=beta,
+            gamma=gamma,
             num_model=cfg.num_model,
         )
 
@@ -327,7 +204,8 @@ def main():
             J=cfg.J_nominal - cfg.dJ,
             tlist=tlist,
             N=cfg.N,
-            gamma=cfg.gamma,
+            beta=beta,
+            gamma=gamma,
             num_model=cfg.num_model,
         )
 
@@ -337,33 +215,81 @@ def main():
             dJ=cfg.dJ,
             tol=cfg.qfi_tol,
         )
-
         qfi_matrix[i, :] = qfi_t
 
     qcrb_matrix = 1.0 / (qfi_matrix + cfg.qcrb_eps)
-    min_qcrb_per_omega = np.min(qcrb_matrix, axis=1)
 
-    # Optimal time t*(Omega): the time at which the QCRB is minimised for each Omega
-    optimal_time_idx = np.argmin(qcrb_matrix, axis=1)
-    optimal_times = tlist[optimal_time_idx]
+    # Normalise by the minimum QCRB at Omega = 0.
+    omega0_idx = int(np.argmin(np.abs(omega_list)))
+    qcrb_at_omega0 = np.min(qcrb_matrix[omega0_idx, :])
+    if qcrb_at_omega0 < cfg.qcrb_eps:
+        qcrb_at_omega0 = cfg.qcrb_eps  # guard against zero
+    qcrb_matrix_norm = qcrb_matrix / qcrb_at_omega0
 
-    optimal_idx = np.argmin(min_qcrb_per_omega)
-    optimal_omega = omega_list[optimal_idx]
+    flat_idx = np.argmin(qcrb_matrix_norm)
+    omega_idx, time_idx = np.unravel_index(flat_idx, qcrb_matrix_norm.shape)
 
-    print("\nDone.")
-    print(f"Optimal Omega (bath-only QFI criterion): {optimal_omega:.6f}")
-    print(f"Minimum bath-only QCRB: {min_qcrb_per_omega[optimal_idx]:.6e}")
-    print(f"Optimal time at best Omega: {optimal_times[optimal_idx]:.6f}")
+    return {
+        "gamma": gamma,
+        "beta": beta,
+        "min_qcrb_norm": qcrb_matrix_norm[omega_idx, time_idx],
+        "min_qcrb": qcrb_matrix[omega_idx, time_idx],
+        "qcrb_at_omega0": qcrb_at_omega0,
+        "optimal_omega": omega_list[omega_idx],
+        "optimal_time": tlist[time_idx],
+    }
 
-    plot_qfi_results(
-        tlist=tlist,
-        omega_list=omega_list,
-        qfi_matrix=qfi_matrix,
-        qcrb_matrix=qcrb_matrix,
-        min_qcrb_per_omega=min_qcrb_per_omega,
-        optimal_times=optimal_times,
-        output_figure=cfg.output_figure,
-    )
+
+def plot_gamma_scan(results, output_figure):
+    gammas = np.array([r["gamma"] for r in results])
+    min_qcrb_norm = np.array([r["min_qcrb_norm"] for r in results])
+    min_qcrb = np.array([r["min_qcrb"] for r in results])
+    qcrb_omega0 = np.array([r["qcrb_at_omega0"] for r in results])
+
+    best_idx = np.argmin(min_qcrb_norm)
+    best_gamma = gammas[best_idx]
+    best_qcrb_norm = min_qcrb_norm[best_idx]
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(gammas, min_qcrb_norm, marker="o")
+    plt.axhline(1.0, color="gray", linestyle=":", label=r"QCRB$(\Omega{=}0)$ reference")
+    plt.axvline(best_gamma, color="red", linestyle="--", label=fr"Best $\gamma$ = {best_gamma:.3g}")
+    plt.xlabel(r"$\gamma$")
+    plt.ylabel(r"$\min_{\Omega,t}\,\mathrm{QCRB}\;/\;\mathrm{QCRB}(\Omega{=}0)$")
+    plt.title(r"Normalised minimal QCRB vs $\gamma$ ($\beta=1$ fixed)")
+    plt.grid(True, linestyle=":")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_figure, bbox_inches="tight")
+    plt.show()
+
+    print("\n=== Best gamma result ===")
+    print(f"Best gamma:                     {best_gamma:.6g}")
+    print(f"Normalised minimum QCRB:        {best_qcrb_norm:.6e}")
+    print(f"Absolute minimum QCRB:          {min_qcrb[best_idx]:.6e}")
+    print(f"QCRB at Omega=0 (reference):    {qcrb_omega0[best_idx]:.6e}")
+
+
+def main():
+    cfg = SimulationConfig()
+
+    gamma_list = np.linspace(cfg.gamma_min, cfg.gamma_max, cfg.n_gammas)
+
+    results = []
+    print(f"Scanning {len(gamma_list)} gamma values (beta = {cfg.beta}) ...")
+
+    for i, gamma in enumerate(gamma_list):
+        print(f"[{i+1:2d}/{len(gamma_list)}] gamma = {gamma:.5g}")
+        res = compute_min_qcrb_for_gamma(cfg, gamma)
+        results.append(res)
+        print(
+            f"    min QCRB (norm) = {res['min_qcrb_norm']:.6e}, "
+            f"QCRB(Omega=0) = {res['qcrb_at_omega0']:.6e}, "
+            f"Omega* = {res['optimal_omega']:.4f}, "
+            f"t* = {res['optimal_time']:.4f}"
+        )
+
+    plot_gamma_scan(results, cfg.output_figure)
 
 
 if __name__ == "__main__":
