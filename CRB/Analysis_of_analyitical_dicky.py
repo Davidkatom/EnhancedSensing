@@ -1,8 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
 import qutip as qt
 from dataclasses import dataclass
-
 
 # ============================================================
 # Configuration
@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class SimulationConfig:
-    N: int = 15
+    N: int = 14
     gamma: float = 0.1
     beta: float = 1.0
     J_nominal: float = 1.0
@@ -18,10 +18,10 @@ class SimulationConfig:
 
     t_min: float = 0.01
     t_max: float = 100.0
-    n_steps: int = 400
+    n_steps: int = 500
 
     omega_min: float = 0.0
-    omega_max: float = 50.0
+    omega_max: float = 30.0
     n_omegas: int = 60
 
     num_model: int = 1  # 1 = exact H1, 2 = effective H2
@@ -143,7 +143,7 @@ def get_bath_density_matrices(
 # QFI
 # ============================================================
 
-def qfi_from_rho_and_drho(rho: np.ndarray, drho: np.ndarray, tol: float = 1e-12) -> float:
+def qfi_from_rho_and_drho(rho: np.ndarray, drho: np.ndarray, tol: float = 1e-12) -> tuple[float, np.ndarray]:
     r"""
     Compute mixed-state QFI from rho and d rho / dJ using
 
@@ -164,6 +164,7 @@ def qfi_from_rho_and_drho(rho: np.ndarray, drho: np.ndarray, tol: float = 1e-12)
 
     qfi = 0.0
     dim = len(evals)
+    L = np.zeros_like(rho, dtype=np.complex128)
 
     for m in range(dim):
         vm = evecs[:, m]
@@ -173,8 +174,9 @@ def qfi_from_rho_and_drho(rho: np.ndarray, drho: np.ndarray, tol: float = 1e-12)
                 vn = evecs[:, n]
                 elem = np.vdot(vm, drho @ vn)
                 qfi += 2.0 * (np.abs(elem) ** 2) / denom
+                L += (2.0 * elem / denom) * np.outer(vm, vn.conj())
 
-    return float(np.real(qfi))
+    return float(np.real(qfi)), L
 
 
 def compute_bath_qfi_trajectory(
@@ -189,6 +191,7 @@ def compute_bath_qfi_trajectory(
     """
     n_times = len(bath_rhos_plus)
     qfi_t = np.zeros(n_times)
+    L_t = []
 
     for k in range(n_times):
         rho_plus = bath_rhos_plus[k]
@@ -197,9 +200,11 @@ def compute_bath_qfi_trajectory(
         rho = 0.5 * (rho_plus + rho_minus)
         drho = (rho_plus - rho_minus) / (2.0 * dJ)
 
-        qfi_t[k] = qfi_from_rho_and_drho(rho, drho, tol=tol)
+        qfi, L = qfi_from_rho_and_drho(rho, drho, tol=tol)
+        qfi_t[k] = qfi
+        L_t.append(L)
 
-    return qfi_t
+    return qfi_t, L_t
 
 
 # ============================================================
@@ -209,76 +214,95 @@ def compute_bath_qfi_trajectory(
 def plot_qfi_results(
     tlist: np.ndarray,
     omega_list: np.ndarray,
-    qfi_matrix: np.ndarray,
-    qcrb_matrix: np.ndarray,
     min_qcrb_per_omega: np.ndarray,
     optimal_times: np.ndarray,
+    opt_quadrature_angles: np.ndarray,
     output_figure: str,
 ):
     """
     Plot:
-      1) bath-only QCRB heatmap  (with t*(Omega) overlay)
-      2) minimum bath-only QCRB vs Omega
-      3) optimal time t*(Omega) vs Omega
+      1) minimum bath-only QCRB vs Omega
+      2) optimal time t*(Omega) vs Omega
+      3) optimal measurement quadrature vs Omega
     """
     optimal_idx = np.argmin(min_qcrb_per_omega)
     optimal_omega = omega_list[optimal_idx]
 
     fig, axes = plt.subplots(1, 3, figsize=(20, 5))
 
-    vmax_qcrb = np.percentile(min_qcrb_per_omega, 95) * 5.0
-
-    im = axes[0].pcolormesh(
-        tlist,
-        omega_list,
-        qcrb_matrix,
-        shading="auto",
-        cmap="viridis",
-        vmax=vmax_qcrb,
-    )
-    # Overlay the optimal time trajectory on the heatmap
+    # --- First panel: min QCRB ---
     axes[0].plot(
-        optimal_times,
-        omega_list,
-        color="red",
-        linewidth=1.5,
-        linestyle="--",
-        label=r"$t^*(\Omega)$",
-    )
-    axes[0].set_xlabel("Time (t)")
-    axes[0].set_ylabel(r"Transverse Field ($\Omega$)")
-    axes[0].set_title("Bath-only Quantum Cramér-Rao Bound")
-    axes[0].legend(loc="upper right")
-    fig.colorbar(im, ax=axes[0])
-
-    axes[1].plot(
         omega_list,
         min_qcrb_per_omega,
         marker="o",
         linestyle="-",
         label="Min bath-only QCRB",
     )
-    axes[1].axvline(
+    axes[0].axvline(
         optimal_omega,
         linestyle="--",
         color="red",
         label=fr"Optimal $\Omega$ = {optimal_omega:.2f}",
     )
-    axes[1].set_xlabel(r"Transverse Field ($\Omega$)")
-    axes[1].set_ylabel(r"Min over $t$ of QCRB")
-    axes[1].set_title("Minimum bath-only QCRB vs Omega")
-    axes[1].set_yscale("log")
-    axes[1].grid(True, linestyle=":")
-    axes[1].legend()
+    axes[0].set_xlabel(r"Transverse Field ($\Omega$)")
+    axes[0].set_ylabel(r"Min over $t$ of QCRB")
+    axes[0].set_title("Minimum bath-only QCRB vs Omega")
+    axes[0].set_yscale("log")
+    axes[0].grid(True, linestyle=":")
+    axes[0].legend()
 
-    # --- Third panel: optimal time t*(Omega) ---
-    axes[2].plot(
+    # --- Second panel: optimal time t*(Omega) ---
+    axes[1].plot(
         omega_list,
         optimal_times,
         marker="s",
-        linestyle="-",
+        linestyle="",
         color="darkorange",
-        label=r"$t^*(\Omega)$",
+        label=r"Data $t^*(\Omega)$",
+    )
+    
+    # Fit for T(Omega) = b + c * Omega
+    # Using curve_fit to find parameters b and c
+    def fit_func(omega, b, c):
+        return b + c * omega
+
+    try:
+        # Initial guess: b is roughly the intercept, c is small
+        p0_guess = [optimal_times[0], 0.0]
+        popt, pcov = curve_fit(fit_func, omega_list, optimal_times, p0=p0_guess, maxfev=10000)
+        b_fit, c_fit = popt
+        
+        omega_dense = np.linspace(min(omega_list), max(omega_list), 200)
+        axes[1].plot(
+            omega_dense, 
+            fit_func(omega_dense, b_fit, c_fit), 
+            linestyle="-", 
+            color="black",
+            label=fr"Fit: $T=b+c\Omega$" + "\n" + f"b={b_fit:.3f}, c={c_fit:.3e}"
+        )
+    except Exception as e:
+        print(f"Curve fitting failed: {e}")
+
+    axes[1].axvline(
+        optimal_omega,
+        color="red",
+        linestyle="--",
+        label=fr"Optimal $\Omega$ = {optimal_omega:.2f}",
+    )
+    axes[1].set_xlabel(r"Transverse Field ($\Omega$)")
+    axes[1].set_ylabel(r"Optimal time $t^*$")
+    axes[1].set_title(r"Optimal measurement time $t^*$ vs $\Omega$")
+    axes[1].grid(True, linestyle=":")
+    axes[1].legend()
+
+    # --- Third panel: optimal quadrature ---
+    axes[2].plot(
+        omega_list,
+        opt_quadrature_angles,
+        marker="^",
+        linestyle="-",
+        color="green",
+        label="Optimal Quadrature",
     )
     axes[2].axvline(
         optimal_omega,
@@ -287,8 +311,8 @@ def plot_qfi_results(
         label=fr"Optimal $\Omega$ = {optimal_omega:.2f}",
     )
     axes[2].set_xlabel(r"Transverse Field ($\Omega$)")
-    axes[2].set_ylabel(r"Optimal time $t^*$")
-    axes[2].set_title(r"Optimal measurement time $t^*$ vs $\Omega$")
+    axes[2].set_ylabel(r"Angle (radians)")
+    axes[2].set_title(r"Optimal Quadrature Angle vs $\Omega$")
     axes[2].grid(True, linestyle=":")
     axes[2].legend()
 
@@ -308,6 +332,7 @@ def main():
     omega_list = np.linspace(cfg.omega_min, cfg.omega_max, cfg.n_omegas)
 
     qfi_matrix = np.zeros((len(omega_list), len(tlist)))
+    L_all = []
 
     print(f"Computing bath-only QFI for {len(omega_list)} values of Omega...")
 
@@ -335,7 +360,7 @@ def main():
             num_model=cfg.num_model,
         )
 
-        qfi_t = compute_bath_qfi_trajectory(
+        qfi_t, L_t = compute_bath_qfi_trajectory(
             bath_rhos_plus=bath_rhos_plus,
             bath_rhos_minus=bath_rhos_minus,
             dJ=cfg.dJ,
@@ -343,6 +368,7 @@ def main():
         )
 
         qfi_matrix[i, :] = qfi_t
+        L_all.append(L_t)
 
     qcrb_matrix = 1.0 / (qfi_matrix + cfg.qcrb_eps)
     min_qcrb_per_omega = np.min(qcrb_matrix, axis=1)
@@ -354,6 +380,21 @@ def main():
     optimal_idx = np.argmin(min_qcrb_per_omega)
     optimal_omega = omega_list[optimal_idx]
 
+    # Calculate optimal YZ plane squeezing quadrature angle for each Omega at optimal time
+    ops = build_spin_operators(cfg.N)
+    Jy = qt.jmat(ops["S_spin"], "y").full() * 2.0
+    Jz = qt.jmat(ops["S_spin"], "z").full() * 2.0
+    Jyz = Jy @ Jz + Jz @ Jy
+    Jy2_minus_Jz2 = Jy @ Jy - Jz @ Jz
+    
+    opt_quadrature_angles = np.zeros(len(omega_list))
+    for i in range(len(omega_list)):
+        t_idx = optimal_time_idx[i]
+        L_opt = L_all[i][t_idx]
+        cyz = np.real(np.trace(L_opt @ Jyz))
+        cy2z2 = np.real(np.trace(L_opt @ Jy2_minus_Jz2))
+        opt_quadrature_angles[i] = 0.5 * np.arctan2(cyz, cy2z2)
+
     print("\nDone.")
     print(f"Optimal Omega (bath-only QFI criterion): {optimal_omega:.6f}")
     print(f"Minimum bath-only QCRB: {min_qcrb_per_omega[optimal_idx]:.6e}")
@@ -362,10 +403,9 @@ def main():
     plot_qfi_results(
         tlist=tlist,
         omega_list=omega_list,
-        qfi_matrix=qfi_matrix,
-        qcrb_matrix=qcrb_matrix,
         min_qcrb_per_omega=min_qcrb_per_omega,
         optimal_times=optimal_times,
+        opt_quadrature_angles=opt_quadrature_angles,
         output_figure=cfg.output_figure,
     )
 

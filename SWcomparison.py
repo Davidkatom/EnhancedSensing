@@ -121,6 +121,8 @@ x0 = 1.0
 m_vals_sol2 = np.diag(Jz.full())
 n_mat, m_mat = np.meshgrid(m_vals_sol2, m_vals_sol2, indexing='ij')
 
+# Assume that n = m
+m_mat = n_mat
 
 C1 = (
     2 * gamma
@@ -142,39 +144,7 @@ Delta = np.sqrt(C1**2 - 4 * C0 + 0j)
 sol2_expect = np.zeros((len(e_ops_bath), len(tlist)))
 
 for idx, t in enumerate(tlist):
-    cosh_term = np.cosh(Delta * t / 2)
-    sinh_term = np.sinh(Delta * t / 2)
-
-    numerator = (
-        1j * J**2 * (n_mat**2 - m_mat**2) * x0 / Omega
-        - (J**2 * (beta + gamma) * (n_mat - m_mat)**2 * r0) / (Omega**2)
-        + C1 * r0
-    )
-
-    # Safe division by Delta
-    safe_sinh_over_delta = np.zeros_like(Delta, dtype=np.complex128)
-    nonzero_mask = np.abs(Delta) > 1e-12
-    zero_mask = ~nonzero_mask
-
-    safe_sinh_over_delta[nonzero_mask] = sinh_term[nonzero_mask] / Delta[nonzero_mask]
-
-    # Since sinh(Delta*t/2)/Delta -> t/2 as Delta -> 0
-    safe_sinh_over_delta[zero_mask] = t / 2.0
-
-    r_nm_t = np.exp(-C1 * t / 2) * (
-        r0 * cosh_term
-        + numerator * safe_sinh_over_delta
-    )
-
-    # If n == m, Delta = C1 - 0 = C1 (since C0 = 0)
-    # The term in parenthesis simplifies
-    # r_nm_t(n=m) = np.exp(-C1 * t / 2) * (r0 * cosh(C1 * t / 2) + C1 * r0 * sinh(C1 * t / 2) / C1)
-    #             = np.exp(-C1 * t / 2) * r0 * (cosh(C1 * t / 2) + sinh(C1 * t / 2))
-    #             = np.exp(-C1 * t / 2) * r0 * np.exp(C1 * t / 2)
-    #             = r0
-    
-    n_eq_m_mask = (n_mat == m_mat)
-    r_nm_t[n_eq_m_mask] = r0
+    r_nm_t = np.ones_like(Delta, dtype=np.complex128) * r0
 
     rho_t_mat = rho0_mat * r_nm_t
     rho_t = qt.Qobj(rho_t_mat, dims=rho0_bath.dims)
