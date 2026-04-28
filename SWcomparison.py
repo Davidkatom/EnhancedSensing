@@ -166,6 +166,16 @@ for idx, t in enumerate(tlist):
         + numerator * safe_sinh_over_delta
     )
 
+    # If n == m, Delta = C1 - 0 = C1 (since C0 = 0)
+    # The term in parenthesis simplifies
+    # r_nm_t(n=m) = np.exp(-C1 * t / 2) * (r0 * cosh(C1 * t / 2) + C1 * r0 * sinh(C1 * t / 2) / C1)
+    #             = np.exp(-C1 * t / 2) * r0 * (cosh(C1 * t / 2) + sinh(C1 * t / 2))
+    #             = np.exp(-C1 * t / 2) * r0 * np.exp(C1 * t / 2)
+    #             = r0
+    
+    n_eq_m_mask = (n_mat == m_mat)
+    r_nm_t[n_eq_m_mask] = r0
+
     rho_t_mat = rho0_mat * r_nm_t
     rho_t = qt.Qobj(rho_t_mat, dims=rho0_bath.dims)
 
