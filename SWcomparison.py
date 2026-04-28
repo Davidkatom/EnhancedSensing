@@ -6,10 +6,10 @@ import qutip as qt
 # Parameters
 # =====================================================================
 N = 10 # Number of bath spins
-Omega = 20  # Transverse field on central spin
+Omega = 15  # Transverse field on central spin
 J = 1.0      # Interaction strength
-gamma = 0.1 # Dephasing rate on central spin
-beta = 0.0
+gamma = 3.0 # Dephasing rate on central spin
+beta = 1.0
 t_max = 10                # Total simulation time 
 n_steps = 500              # Time steps for calculation
 tlist = np.linspace(0, t_max, n_steps)
@@ -44,6 +44,9 @@ Sx = qt.tensor(si, Jx)
 Sy = qt.tensor(si, Jy)
 Sz = qt.tensor(si, Jz)
 
+
+
+
 # =====================================================================
 # Hamiltonians
 # =====================================================================
@@ -68,6 +71,14 @@ plus_state_bath = qt.spin_coherent(S_spin, np.pi/2, 0)
 
 psi0 = qt.tensor(plus_state_central, plus_state_bath)
 
+rho0_bath = plus_state_bath * plus_state_bath.dag()
+rho0_mat = rho0_bath.full()
+
+# Dicke basis states m values (from N/2 down to -N/2)
+m_vals = np.diag((qt.jmat(S_spin, 'z') * 2.0).full())
+n_mat, m_mat = np.meshgrid(m_vals, m_vals, indexing='ij')
+e_ops_bath = [Jz, Jx, Jy, Jz**2, Jx**2, Jy**2]
+
 # =====================================================================
 # Evolution
 # =====================================================================
@@ -83,33 +94,66 @@ res2 = qt.mesolve(H2, psi0, tlist, c_ops=c_ops, e_ops=e_ops)
 # =====================================================================
 # Adiabatic Approximation
 # =====================================================================
-lambda_val = (J**2 / (2 * Omega)) if Omega != 0.0 else 0.0
+r0 = 1.0
+x0 = 1.0
 
-rho0_bath = plus_state_bath * plus_state_bath.dag()
-rho0_mat = rho0_bath.full()
+# Use eigenvalues consistent with your numerical Sz = sum sigma_z
+# If your derivation uses collective J_z instead, replace Jz by qt.jmat(S_spin, 'z')
+m_vals_sol2 = np.diag(Jz.full())
+n_mat, m_mat = np.meshgrid(m_vals_sol2, m_vals_sol2, indexing='ij')
 
-# Dicke basis states m values (from N/2 down to -N/2)
-m_vals = np.diag((qt.jmat(S_spin, 'z') * 2.0).full())
-n_mat, m_mat = np.meshgrid(m_vals, m_vals, indexing='ij')
 
-e_ops_bath = [Jz, Jx, Jy, Jz**2, Jx**2, Jy**2]
+# Assume n = m approximation (since only close n, m survive):
+# Substitute (n_mat + m_mat) -> 2 * n_mat
+# and drop (n_mat - m_mat)**2 in C1 because it's a small correction compared to 2*gamma.
+C1 = (
+    2 * gamma
+    + (J**2 * beta * (2 * n_mat)**2) / (2 * Omega**2)
+)
+
+C0 = (
+    (J**2 * gamma * (beta + gamma) * (n_mat - m_mat)**2) / (Omega**2)
+    + (J**4 * ((n_mat - m_mat) * 2 * n_mat)**2) / (4 * Omega**2)
+)
+
+Delta = np.sqrt(C1**2 - 4 * C0 + 0j)
+
+# Delta = 2*gamma * np.ones_like(n_mat)
+
+
 adiab_expect = np.zeros((len(e_ops_bath), len(tlist)))
 
 for idx, t in enumerate(tlist):
-    # Calculate r_{n,m}(t)
-    r_nm = np.exp(-1 * lambda_val**2 * (n_mat**2 - m_mat**2)**2 / (2*gamma) * t - 1*(lambda_val/Omega) * gamma * (n_mat - m_mat)**2 * t)
-    
-    # Calculate rho_bath(t)
-    rho_t_mat = rho0_mat * r_nm
+    cosh_term = np.cosh(Delta * t / 2)
+    sinh_term = np.sinh(Delta * t / 2)
+
+    # Dropping the (n-m)**2 term here as well since it's added to C1*r0 which is O(1)
+    numerator = (
+        1j * J**2 * ((n_mat - m_mat) * 2 * n_mat) * x0 / Omega
+        + C1 * r0
+    )
+
+    # Safe division by Delta
+    safe_sinh_over_delta = np.zeros_like(Delta, dtype=np.complex128)
+    nonzero_mask = np.abs(Delta) > 1e-12
+    zero_mask = ~nonzero_mask
+
+    safe_sinh_over_delta[nonzero_mask] = sinh_term[nonzero_mask] / Delta[nonzero_mask]
+
+    # Since sinh(Delta*t/2)/Delta -> t/2 as Delta -> 0
+    safe_sinh_over_delta[zero_mask] = t / 2.0
+
+    r_nm_t = np.exp(-C1 * t / 2) * (
+        r0 * cosh_term
+        + numerator * safe_sinh_over_delta
+    )
+
+    rho_t_mat = rho0_mat * r_nm_t
     rho_t = qt.Qobj(rho_t_mat, dims=rho0_bath.dims)
-    
-    # Expectation values for the bath
+
     for op_idx, op in enumerate(e_ops_bath):
         adiab_expect[op_idx, idx] = np.real(qt.expect(op, rho_t))
 
-# =====================================================================
-# Analytical Solution 2
-# =====================================================================
 # =====================================================================
 # Analytical Solution 2 - corrected equation
 # =====================================================================
@@ -121,8 +165,6 @@ x0 = 1.0
 m_vals_sol2 = np.diag(Jz.full())
 n_mat, m_mat = np.meshgrid(m_vals_sol2, m_vals_sol2, indexing='ij')
 
-# Assume that n = m
-m_mat = n_mat
 
 C1 = (
     2 * gamma
@@ -144,7 +186,29 @@ Delta = np.sqrt(C1**2 - 4 * C0 + 0j)
 sol2_expect = np.zeros((len(e_ops_bath), len(tlist)))
 
 for idx, t in enumerate(tlist):
-    r_nm_t = np.ones_like(Delta, dtype=np.complex128) * r0
+    cosh_term = np.cosh(Delta * t / 2)
+    sinh_term = np.sinh(Delta * t / 2)
+
+    numerator = (
+        1j * J**2 * (n_mat**2 - m_mat**2) * x0 / Omega
+        - (J**2 * (beta + gamma) * (n_mat - m_mat)**2 * r0) / (Omega**2)
+        + C1 * r0
+    )
+
+    # Safe division by Delta
+    safe_sinh_over_delta = np.zeros_like(Delta, dtype=np.complex128)
+    nonzero_mask = np.abs(Delta) > 1e-12
+    zero_mask = ~nonzero_mask
+
+    safe_sinh_over_delta[nonzero_mask] = sinh_term[nonzero_mask] / Delta[nonzero_mask]
+
+    # Since sinh(Delta*t/2)/Delta -> t/2 as Delta -> 0
+    safe_sinh_over_delta[zero_mask] = t / 2.0
+
+    r_nm_t = np.exp(-C1 * t / 2) * (
+        r0 * cosh_term
+        + numerator * safe_sinh_over_delta
+    )
 
     rho_t_mat = rho0_mat * r_nm_t
     rho_t = qt.Qobj(rho_t_mat, dims=rho0_bath.dims)
