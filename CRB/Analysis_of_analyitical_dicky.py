@@ -14,7 +14,7 @@ from scipy.optimize import curve_fit
 
 @dataclass(frozen=True)
 class SimulationConfig:
-    N: int = 80
+    N: int = 8
     gamma: float = 0.0
     beta: float = 0.3
 
@@ -22,7 +22,7 @@ class SimulationConfig:
     dJ: float = 1e-3
 
     t_min: float = 0.01
-    t_max: float = 30.0
+    t_max: float = 60.0
     n_steps: int = 300
 
     # Dead time per shot (state preparation + measurement); the Fisher
@@ -30,7 +30,7 @@ class SimulationConfig:
     t_overhead: float = 5.0
 
     omega_min: float = 0.0
-    omega_max: float = 20.0
+    omega_max: float = 40.0
     n_omegas: int = 20
 
     qfi_tol: float = 1e-12
@@ -420,6 +420,7 @@ def plot_qfi_results(
     tlist: np.ndarray,
     omega_list: np.ndarray,
     min_qcrb_per_omega: np.ndarray,
+    min_qcrb_unnormalized_per_omega: np.ndarray,
     optimal_times: np.ndarray,
     opt_quadrature_angles: np.ndarray,
     # opt_ccrb_results: dict,
@@ -430,41 +431,80 @@ def plot_qfi_results(
 ):
     """
     Plot:
-      1) minimum bath-only QCRB sensitivity vs Omega
+      1) time-normalized and unnormalized minimum bath-only QCRB vs Omega
       2) optimal time t*(Omega) vs Omega
       3) optimal measurement quadrature vs Omega
     (4th panel -- CCRB/CFI of measurements -- is commented out)
     """
     optimal_idx = np.argmin(min_qcrb_per_omega)
     optimal_omega = omega_list[optimal_idx]
+    unnormalized_optimal_idx = np.argmin(min_qcrb_unnormalized_per_omega)
+    unnormalized_optimal_omega = omega_list[unnormalized_optimal_idx]
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     axes = axes.flatten()
 
-    # --- First panel: min QCRB sensitivity ---
-    axes[0].plot(
+    # --- First panel: time-normalized and unnormalized min QCRB ---
+    normalized_line = axes[0].plot(
         omega_list,
         min_qcrb_per_omega,
         marker="o",
         linestyle="-",
-        label="Min bath-only QCRB sensitivity",
+        color="tab:blue",
+        label=r"Time-normalized: $\min_t\sqrt{(t+t_{\mathrm{oh}})/F_Q}$",
     )
-    axes[0].axvline(
+    normalized_optimum_line = axes[0].axvline(
         optimal_omega,
         linestyle="--",
-        color="red",
-        label=rf"Optimal $\Omega$ = {optimal_omega:.2f}",
+        color="tab:blue",
+        alpha=0.65,
+        label=rf"Normalized optimum $\Omega$ = {optimal_omega:.2f}",
     )
     axes[0].set_xlabel(r"Transverse Field ($\Omega$)")
     axes[0].set_ylabel(
-        r"Min over $t$ of QCRB sensitivity $\sqrt{(t+t_{\mathrm{oh}})/F_Q}$"
+        r"Time-normalized QCRB $\min_t\sqrt{(t+t_{\mathrm{oh}})/F_Q}$",
+        color="tab:blue",
     )
-    axes[0].set_title(
-        r"Minimum bath-only QCRB sensitivity $\sqrt{(t+t_{\mathrm{oh}})/F_Q}$ vs $\Omega$"
+    axes[0].tick_params(axis="y", labelcolor="tab:blue")
+
+    # The unnormalized QCRB has different units and can have a very different
+    # scale, so show it on a second y-axis while keeping the same Omega axis.
+    unnormalized_axis = axes[0].twinx()
+    unnormalized_line = unnormalized_axis.plot(
+        omega_list,
+        min_qcrb_unnormalized_per_omega,
+        marker="s",
+        linestyle="-",
+        color="tab:orange",
+        label=r"Unnormalized: $\min_t 1/\sqrt{F_Q}$",
     )
+    unnormalized_optimum_line = unnormalized_axis.axvline(
+        unnormalized_optimal_omega,
+        linestyle=":",
+        color="tab:orange",
+        alpha=0.75,
+        label=rf"Unnormalized optimum $\Omega$ = {unnormalized_optimal_omega:.2f}",
+    )
+    unnormalized_axis.set_ylabel(
+        r"Unnormalized QCRB $\min_t 1/\sqrt{F_Q}$",
+        color="tab:orange",
+    )
+    unnormalized_axis.tick_params(axis="y", labelcolor="tab:orange")
+
+    axes[0].set_title("Time-normalized and unnormalized bath-only QCRB")
     # axes[0].set_yscale("log")
     axes[0].grid(True, linestyle=":")
-    axes[0].legend()
+    first_panel_handles = (
+        normalized_line
+        + [normalized_optimum_line]
+        + unnormalized_line
+        + [unnormalized_optimum_line]
+    )
+    axes[0].legend(
+        first_panel_handles,
+        [handle.get_label() for handle in first_panel_handles],
+        fontsize=8,
+    )
 
     # --- Second panel: optimal time t*(Omega) ---
     axes[1].plot(
@@ -702,6 +742,11 @@ def main():
     qcrb_matrix = np.sqrt(t_cycle[None, :] / (qfi_matrix + cfg.qcrb_eps))
     min_qcrb_per_omega = np.min(qcrb_matrix, axis=1)
 
+    # Also retain the QCRB without time normalization. Its optimum can occur at
+    # a different time and Omega, so minimize it independently over time.
+    qcrb_unnormalized_matrix = 1.0 / np.sqrt(qfi_matrix + cfg.qcrb_eps)
+    min_qcrb_unnormalized_per_omega = np.min(qcrb_unnormalized_matrix, axis=1)
+
     # Optimal time t*(Omega): the time at which the QCRB sensitivity is minimised for each Omega
     optimal_time_idx = np.argmin(qcrb_matrix, axis=1)
     optimal_times = tlist[optimal_time_idx]
@@ -734,6 +779,12 @@ def main():
     print("\nDone.")
     print(f"Optimal Omega_0 (bath-only QFI criterion): {optimal_omega:.6f}")
     print(f"Minimum bath-only QCRB sensitivity: {min_qcrb_per_omega[optimal_idx]:.6e}")
+    unnormalized_optimal_idx = np.argmin(min_qcrb_unnormalized_per_omega)
+    print(
+        "Minimum unnormalized bath-only QCRB: "
+        f"{min_qcrb_unnormalized_per_omega[unnormalized_optimal_idx]:.6e} "
+        f"at Omega_0={omega_list[unnormalized_optimal_idx]:.6f}"
+    )
     print(f"Optimal time at best Omega_0: {optimal_times[optimal_idx]:.6f}")
 
     # # ----------------------------------------------------------------
@@ -861,6 +912,7 @@ def main():
         tlist=tlist,
         omega_list=omega_list,
         min_qcrb_per_omega=min_qcrb_per_omega,
+        min_qcrb_unnormalized_per_omega=min_qcrb_unnormalized_per_omega,
         optimal_times=optimal_times,
         opt_quadrature_angles=opt_quadrature_angles,
         # opt_ccrb_results=opt_ccrb_results,

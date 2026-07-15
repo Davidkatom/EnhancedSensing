@@ -25,7 +25,6 @@ import qutip as qt
 # Configuration
 # ============================================================
 
-
 @dataclass
 class Config:
     J: float = 1.0
