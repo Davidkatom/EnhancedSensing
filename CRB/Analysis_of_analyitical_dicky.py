@@ -1,419 +1,45 @@
+"""Bath-only QFI analysis for the collective Dicke-like model."""
+
 from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 import numpy as np
-import qutip as qt
 from scipy.optimize import curve_fit
 
-# from scipy.optimize import differential_evolution  # (CFI observable search)
-
-# ============================================================
-# Configuration
-# ============================================================
+try:
+    from CRB.crb_core import (
+        SimulationConfig as BaseSimulationConfig,
+        build_bath_operators,
+        build_hamiltonian,
+        build_initial_state,
+        build_spin_operators,
+        compute_bath_qfi_trajectory,
+        compute_qcrb_matrices,
+        get_bath_density_matrices,
+        qfi_from_rho_and_drho,
+    )
+except ModuleNotFoundError:  # Allow: python CRB/Analysis_of_analyitical_dicky.py
+    from crb_core import (
+        SimulationConfig as BaseSimulationConfig,
+        build_bath_operators,
+        build_hamiltonian,
+        build_initial_state,
+        build_spin_operators,
+        compute_bath_qfi_trajectory,
+        compute_qcrb_matrices,
+        get_bath_density_matrices,
+        qfi_from_rho_and_drho,
+    )
 
 
 @dataclass(frozen=True)
-class SimulationConfig:
-    N: int = 8
-    gamma: float = 0.0
-    beta: float = 0.3
-
-    J_nominal: float = 1
-    dJ: float = 1e-3
-
-    t_min: float = 0.01
-    t_max: float = 60.0
-    n_steps: int = 300
-
-    # Dead time per shot (state preparation + measurement); the Fisher
-    # information is normalized by (t + t_overhead), not by t alone.
-    t_overhead: float = 5.0
+class SimulationConfig(BaseSimulationConfig):
+    """Dicke-analysis sweep and output configuration."""
 
     omega_min: float = 0.0
     omega_max: float = 40.0
     n_omegas: int = 20
-
-    qfi_tol: float = 1e-12
-    qcrb_eps: float = 1e-15
-
     output_figure: str = "bath_only_qfi_analysis.png"
-
-
-# ============================================================
-# Operator / state construction
-# ============================================================
-
-
-def build_spin_operators(N: int):
-    """
-    Build all operators needed for the full central-spin + bath model.
-    """
-    S_spin = N / 2.0
-    dim_bath = int(2 * S_spin + 1)
-
-    Jz = qt.jmat(S_spin, "z") * 2.0
-    I_bath = qt.qeye(dim_bath)
-
-    sx = qt.sigmax()
-    sz = qt.sigmaz()
-    si = qt.qeye(2)
-
-    sx_s = qt.tensor(sx, I_bath)
-    sz_s = qt.tensor(sz, I_bath)
-    Sz_op = qt.tensor(si, Jz)
-
-    return {
-        "S_spin": S_spin,
-        "dim_bath": dim_bath,
-        "Jz": Jz,
-        "I_bath": I_bath,
-        "sx": sx,
-        "sz": sz,
-        "si": si,
-        "sx_s": sx_s,
-        "sz_s": sz_s,
-        "Sz_op": Sz_op,
-    }
-
-
-def build_initial_state(S_spin: float) -> qt.Qobj:
-    """
-    Initial state:
-      central spin in |+>
-      bath in spin-coherent state along +x
-    """
-    plus_state_central = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
-    plus_state_bath = qt.spin_coherent(S_spin, np.pi / 2, 0)
-    return qt.tensor(plus_state_central, plus_state_bath)
-
-
-def build_hamiltonian(Omega_0: float, J: float, N: int) -> qt.Qobj:
-    """
-    H = Omega_0 * sigma_x + J * sigma_z * S_z
-    """
-    ops = build_spin_operators(N)
-    sx_s = ops["sx_s"]
-    sz_s = ops["sz_s"]
-    Sz_op = ops["Sz_op"]
-
-    return J * sz_s * Sz_op + Omega_0 * sx_s
-
-
-# ============================================================
-# Time evolution and reduced bath states
-# ============================================================
-
-
-def get_bath_density_matrices(
-    Omega_0: float,
-    J: float,
-    tlist: np.ndarray,
-    N: int = 10,
-    gamma: float = 1.0,
-    beta: float = 1.0,
-):
-    """
-    Return the reduced bath density matrices rho_B(t) = Tr_central[rho_full(t)].
-
-    Exploits the exact block structure of the master equation: the bath enters
-    H only through S_z (diagonal) and the collapse operators act on the central
-    spin alone, so each bath coherence block R^{mn}_{ab} = rho_{(a,m),(b,n)}
-    closes on itself:
-
-        dR/dt = -i (H_m R - R H_n) + beta D[sx] R + gamma D[sz] R,
-        H_m   = Omega_0 sx + J s_m sz.
-
-    That is (N+1)^2 independent 4x4 constant-coefficient ODEs (only the upper
-    triangle is needed, rho_B is Hermitian), each solved by eigendecomposition
-    of its 4x4 Liouvillian -- no (2(N+1))^2-dimensional superoperator.
-    """
-    S_spin = N / 2.0
-    dim_bath = int(2 * S_spin + 1)
-
-    # S_z eigenvalues in the same basis/ordering as qt.jmat / qt.spin_coherent.
-    s_vals = 2.0 * np.real(np.diag(qt.jmat(S_spin, "z").full()))
-    chi = qt.spin_coherent(S_spin, np.pi / 2, 0).full().ravel()
-
-    sx = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
-    sz = np.array([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
-    I2 = np.eye(2, dtype=complex)
-    I4 = np.eye(4, dtype=complex)
-
-    # Central spin starts in |+>; vec is row-major: vec(A R B) = (A kron B^T) vec(R).
-    plus = np.array([1.0, 1.0], dtype=complex) / np.sqrt(2.0)
-    r0 = np.outer(plus, plus.conj()).reshape(4)
-
-    L_diss = beta * (np.kron(sx, sx.T) - I4) + gamma * (np.kron(sz, sz.T) - I4)
-
-    n_times = len(tlist)
-    bath = np.zeros((n_times, dim_bath, dim_bath), dtype=complex)
-
-    for i in range(dim_bath):
-        H_i = Omega_0 * sx + J * s_vals[i] * sz
-        for j in range(i, dim_bath):
-            H_j = Omega_0 * sx + J * s_vals[j] * sz
-            L = -1j * (np.kron(H_i, I2) - np.kron(I2, H_j.T)) + L_diss
-
-            evals, V = np.linalg.eig(L)
-            c0 = np.linalg.solve(V, r0) * (chi[i] * np.conj(chi[j]))
-            rt = V @ (np.exp(np.outer(evals, tlist)) * c0[:, None])  # 4 x n_times
-
-            tr = rt[0] + rt[3]  # Tr_central R^{ij}(t)
-            bath[:, i, j] = tr
-            if j != i:
-                bath[:, j, i] = np.conj(tr)
-
-    return [bath[k] for k in range(n_times)]
-
-
-# ============================================================
-# QFI
-# ============================================================
-
-
-def qfi_from_rho_and_drho(
-    rho: np.ndarray, drho: np.ndarray, tol: float = 1e-12
-) -> tuple[float, np.ndarray]:
-    r"""
-    Compute mixed-state QFI from rho and d rho / dJ using
-
-        F_Q = 2 \sum_{m,n : \lambda_m + \lambda_n > 0}
-              | <m| drho |n> |^2 / (\lambda_m + \lambda_n)
-
-    where rho = sum_n lambda_n |n><n|.
-    """
-    # Hermitize numerically
-    rho = 0.5 * (rho + rho.conj().T)
-    drho = 0.5 * (drho + drho.conj().T)
-
-    evals, evecs = np.linalg.eigh(rho)
-
-    # Clean tiny negative eigenvalues from numerical noise
-    evals = np.real(evals)
-    evals[np.abs(evals) < tol] = 0.0
-
-    # Eigenbasis matrix elements M_mn = <m| drho |n>, then broadcast over the
-    # denominator matrix instead of the old nested m,n Python loop.
-    M = evecs.conj().T @ drho @ evecs
-    denom = evals[:, None] + evals[None, :]
-    inv2 = np.zeros_like(denom)
-    mask = denom > tol
-    inv2[mask] = 2.0 / denom[mask]
-
-    qfi = np.sum(np.abs(M) ** 2 * inv2)
-    W = M * inv2
-    L = evecs @ W @ evecs.conj().T  # SLD back in the original basis
-
-    return float(np.real(qfi)), L
-
-
-# def get_measurement_projectors(O: np.ndarray, tol: float = 1e-10) -> list[np.ndarray]:
-# """
-# Get the projectors onto the eigenspaces of an observable O.
-# """
-# evals, evecs = np.linalg.eigh(O)
-# unique_evals = []
-# projectors = []
-# for i, val in enumerate(evals):
-# found = False
-# for j, uval in enumerate(unique_evals):
-# if abs(val - uval) < tol:
-# projectors[j] += np.outer(evecs[:, i], evecs[:, i].conj())
-# found = True
-# break
-# if not found:
-# unique_evals.append(val)
-# projectors.append(np.outer(evecs[:, i], evecs[:, i].conj()))
-# return projectors
-
-
-# def compute_cfi_from_projectors(
-# rho: np.ndarray, drho: np.ndarray, projectors: list[np.ndarray]
-# ) -> float:
-# """
-# Compute the Classical Fisher Information of a measurement defined by its projectors.
-# """
-# cfi = 0.0
-# for P in projectors:
-# p = np.real(np.trace(P @ rho))
-# dp = np.real(np.trace(P @ drho))
-# if p > 1e-15:
-# cfi += (dp**2) / p
-# return cfi
-
-
-# def build_general_observable(
-# params: np.ndarray, Jx: np.ndarray, Jy: np.ndarray, Jz: np.ndarray
-# ) -> np.ndarray:
-# r"""
-# Build the full general quadratic observable in all three spin directions:
-# O = a_x * J_x + a_y * J_y + a_z * J_z
-# + b_xx * J_x^2 + b_yy * J_y^2 + b_zz * J_z^2
-# + b_xy * {J_x, J_y} + b_xz * {J_x, J_z} + b_yz * {J_y, J_z}
-
-# params = [a_x, a_y, a_z, b_xx, b_yy, b_zz, b_xy, b_xz, b_yz, c_xz2, c_yz2, c_z3, c_xyz]
-# """
-# a_x, a_y, a_z, b_xx, b_yy, b_zz, b_xy, b_xz, b_yz, c_xz2, c_yz2, c_z3, c_xyz = (
-# params
-# )
-
-# Jz2 = Jz @ Jz
-# Jyz = Jy @ Jz + Jz @ Jy
-
-# return (
-# a_x * Jx
-# + a_y * Jy
-# + a_z * Jz
-# + b_xx * (Jx @ Jx)
-# + b_yy * (Jy @ Jy)
-# + b_zz * Jz2
-# + b_xy * (Jx @ Jy + Jy @ Jx)
-# + b_xz * (Jx @ Jz + Jz @ Jx)
-# + b_yz * Jyz
-# + c_xz2 * (Jx @ Jz2 + Jz2 @ Jx)
-# + c_yz2 * (Jy @ Jz2 + Jz2 @ Jy)
-# + c_z3 * (Jz2 @ Jz)
-# + c_xyz * (Jx @ Jyz + Jyz @ Jx)
-# )
-
-
-# def cfi_of_general_observable(
-# params: np.ndarray,
-# rho: np.ndarray,
-# drho: np.ndarray,
-# Jx: np.ndarray,
-# Jy: np.ndarray,
-# Jz: np.ndarray,
-# ) -> float:
-# """
-# Return NEGATIVE CFI (for minimization) of the general observable at given rho/drho.
-# The observable is normalized to unit Frobenius norm to make the scan scale-invariant.
-# """
-# O = build_general_observable(params, Jx, Jy, Jz)
-# norm = np.linalg.norm(O, ord="fro")
-# if norm < 1e-15:
-# return 0.0
-# O = O / norm
-# projectors = get_measurement_projectors(O)
-# return -compute_cfi_from_projectors(rho, drho, projectors)
-
-
-# def fisher_metric_project_sld(rho, drho, basis_ops, reg=1e-10):
-# """
-# Project the SLD onto span{basis_ops} using the Fisher/SLD metric.
-
-# Finds O = sum_i alpha_i O_i such that
-# sum_j G_ij alpha_j = b_i
-
-# where
-# G_ij = 1/2 Tr[rho(O_i O_j + O_j O_i)]
-# b_i  = Tr[O_i drho]
-# """
-# K = len(basis_ops)
-
-# G = np.zeros((K, K), dtype=np.complex128)
-# b = np.zeros(K, dtype=np.complex128)
-
-# for i, Oi in enumerate(basis_ops):
-# Oi = 0.5 * (Oi + Oi.conj().T)
-
-# b[i] = np.trace(Oi @ drho)
-
-# for j, Oj in enumerate(basis_ops):
-# Oj = 0.5 * (Oj + Oj.conj().T)
-# G[i, j] = 0.5 * np.trace(rho @ (Oi @ Oj + Oj @ Oi))
-
-# # numerical cleanup
-# G = 0.5 * (G + G.conj().T)
-# b = np.real_if_close(b)
-
-# # regularized solve, because G can be ill-conditioned
-# alpha = np.linalg.solve(G + reg * np.eye(K), b)
-
-# O_proj = np.zeros_like(rho, dtype=np.complex128)
-# for ai, Oi in zip(alpha, basis_ops):
-# O_proj += ai * Oi
-
-# O_proj = 0.5 * (O_proj + O_proj.conj().T)
-
-# return O_proj, alpha
-
-
-# def find_optimal_observable_params(
-# rho: np.ndarray,
-# drho: np.ndarray,
-# Jx: np.ndarray,
-# Jy: np.ndarray,
-# Jz: np.ndarray,
-# param_bounds: float = 1.0,
-# seed: int = 42,
-# ) -> tuple[np.ndarray, float]:
-# """
-# Use differential evolution to scan over all 13 parameters
-# [a_x, a_y, a_z, b_xx, b_yy, b_zz, b_xy, b_xz, b_yz, c_xz2, c_yz2, c_z3, c_xyz]
-# and find the observable that maximises the Classical Fisher Information
-# at the given (rho, drho).
-
-# Returns:
-# best_params  - the 13 optimal coefficients
-# best_cfi     - the achieved CFI value
-# """
-# bounds = [(-param_bounds, param_bounds)] * 13
-
-# result = differential_evolution(
-# cfi_of_general_observable,
-# bounds,
-# args=(rho, drho, Jx, Jy, Jz),
-# strategy="best1bin",
-# maxiter=500,
-# popsize=15,
-# tol=1e-6,
-# mutation=(0.5, 1.5),
-# recombination=0.9,
-# seed=seed,
-# polish=True,
-# workers=1,
-# )
-# best_params = result.x
-# best_cfi = -result.fun
-# return best_params, best_cfi
-
-
-def compute_bath_qfi_trajectory(
-    bath_rhos_plus,
-    bath_rhos_minus,
-    dJ: float,
-    tol: float = 1e-12,
-):
-    """
-    Given bath density matrices at J+dJ and J-dJ, compute the bath-only
-    QFI as a function of time.
-    """
-    n_times = len(bath_rhos_plus)
-    qfi_t = np.zeros(n_times)
-    L_t = []
-    rho_t = []
-    drho_t = []
-
-    for k in range(n_times):
-        rho_plus = bath_rhos_plus[k]
-        rho_minus = bath_rhos_minus[k]
-
-        rho = 0.5 * (rho_plus + rho_minus)
-        drho = (rho_plus - rho_minus) / (2.0 * dJ)
-
-        qfi, L = qfi_from_rho_and_drho(rho, drho, tol=tol)
-        qfi_t[k] = qfi
-        L_t.append(L)
-        rho_t.append(rho)
-        drho_t.append(drho)
-
-    return qfi_t, L_t, rho_t, drho_t
-
-
-# ============================================================
-# Plotting
-# ============================================================
 
 
 def plot_qfi_results(
@@ -423,28 +49,19 @@ def plot_qfi_results(
     min_qcrb_unnormalized_per_omega: np.ndarray,
     optimal_times: np.ndarray,
     opt_quadrature_angles: np.ndarray,
-    # opt_ccrb_results: dict,
-    # opt_general_ccrb: np.ndarray,
-    # opt_sld_ccrb: np.ndarray,
-    # opt_sld_proj_ccrb: np.ndarray,
     output_figure: str,
-):
-    """
-    Plot:
-      1) time-normalized and unnormalized minimum bath-only QCRB vs Omega
-      2) optimal time t*(Omega) vs Omega
-      3) optimal measurement quadrature vs Omega
-    (4th panel -- CCRB/CFI of measurements -- is commented out)
-    """
-    optimal_idx = np.argmin(min_qcrb_per_omega)
+) -> None:
+    """Plot QCRB minima, optimal times, and optimal quadrature angles."""
+    optimal_idx = int(np.argmin(min_qcrb_per_omega))
     optimal_omega = omega_list[optimal_idx]
-    unnormalized_optimal_idx = np.argmin(min_qcrb_unnormalized_per_omega)
+    unnormalized_optimal_idx = int(
+        np.argmin(min_qcrb_unnormalized_per_omega)
+    )
     unnormalized_optimal_omega = omega_list[unnormalized_optimal_idx]
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     axes = axes.flatten()
 
-    # --- First panel: time-normalized and unnormalized min QCRB ---
     normalized_line = axes[0].plot(
         omega_list,
         min_qcrb_per_omega,
@@ -467,8 +84,6 @@ def plot_qfi_results(
     )
     axes[0].tick_params(axis="y", labelcolor="tab:blue")
 
-    # The unnormalized QCRB has different units and can have a very different
-    # scale, so show it on a second y-axis while keeping the same Omega axis.
     unnormalized_axis = axes[0].twinx()
     unnormalized_line = unnormalized_axis.plot(
         omega_list,
@@ -483,17 +98,19 @@ def plot_qfi_results(
         linestyle=":",
         color="tab:orange",
         alpha=0.75,
-        label=rf"Unnormalized optimum $\Omega$ = {unnormalized_optimal_omega:.2f}",
+        label=(
+            rf"Unnormalized optimum $\Omega$ = "
+            f"{unnormalized_optimal_omega:.2f}"
+        ),
     )
     unnormalized_axis.set_ylabel(
         r"Unnormalized QCRB $\min_t 1/\sqrt{F_Q}$",
         color="tab:orange",
     )
     unnormalized_axis.tick_params(axis="y", labelcolor="tab:orange")
-
     axes[0].set_title("Time-normalized and unnormalized bath-only QCRB")
-    # axes[0].set_yscale("log")
     axes[0].grid(True, linestyle=":")
+
     first_panel_handles = (
         normalized_line
         + [normalized_optimum_line]
@@ -506,7 +123,6 @@ def plot_qfi_results(
         fontsize=8,
     )
 
-    # --- Second panel: optimal time t*(Omega) ---
     axes[1].plot(
         omega_list,
         optimal_times,
@@ -516,29 +132,32 @@ def plot_qfi_results(
         label=r"Data $t^*(\Omega)$",
     )
 
-    # Fit for T(Omega) = b + c * Omega
-    # Using curve_fit to find parameters b and c
-    def fit_func(omega, b, c):
-        return b + c * omega
+    def fit_func(omega: np.ndarray, intercept: float, slope: float) -> np.ndarray:
+        return intercept + slope * omega
 
     try:
-        # Initial guess: b is roughly the intercept, c is small
-        p0_guess = [optimal_times[0], 0.0]
-        popt, pcov = curve_fit(
-            fit_func, omega_list, optimal_times, p0=p0_guess, maxfev=10000
+        fit_parameters, _ = curve_fit(
+            fit_func,
+            omega_list,
+            optimal_times,
+            p0=[optimal_times[0], 0.0],
+            maxfev=10000,
         )
-        b_fit, c_fit = popt
-
+        intercept, slope = fit_parameters
         omega_dense = np.linspace(min(omega_list), max(omega_list), 200)
         axes[1].plot(
             omega_dense,
-            fit_func(omega_dense, b_fit, c_fit),
+            fit_func(omega_dense, intercept, slope),
             linestyle="-",
             color="black",
-            label=rf"Fit: $T=b+c\Omega$" + "\n" + f"b={b_fit:.3f}, c={c_fit:.3e}",
+            label=(
+                r"Fit: $T=b+c\Omega$"
+                + "\n"
+                + f"b={intercept:.3f}, c={slope:.3e}"
+            ),
         )
-    except Exception as e:
-        print(f"Curve fitting failed: {e}")
+    except Exception as error:
+        print(f"Curve fitting failed: {error}")
 
     axes[1].axvline(
         optimal_omega,
@@ -552,7 +171,6 @@ def plot_qfi_results(
     axes[1].grid(True, linestyle=":")
     axes[1].legend()
 
-    # --- Third panel: optimal quadrature ---
     axes[2].plot(
         omega_list,
         opt_quadrature_angles,
@@ -568,345 +186,100 @@ def plot_qfi_results(
         label=rf"Optimal $\Omega$ = {optimal_omega:.2f}",
     )
     axes[2].set_xlabel(r"Transverse Field ($\Omega$)")
-    axes[2].set_ylabel(r"Angle (radians)")
+    axes[2].set_ylabel("Angle (radians)")
     axes[2].set_title(r"Optimal Quadrature Angle vs $\Omega$")
     axes[2].grid(True, linestyle=":")
     axes[2].legend()
 
-    # # --- Fourth panel: CCRB sensitivity of measurements ---
-    # for name, ccrb_vals in opt_ccrb_results.items():
-    # axes[3].plot(
-    # omega_list,
-    # ccrb_vals,
-    # marker="o",
-    # linestyle="-",
-    # markersize=4,
-    # label=f"{name}",
-    # )
-
-    # # Optimal general observable CCRB sensitivity
-    # if opt_general_ccrb is not None:
-    # axes[3].plot(
-    # omega_list,
-    # opt_general_ccrb,
-    # marker="D",
-    # linestyle="-",
-    # linewidth=2.5,
-    # color="purple",
-    # markersize=5,
-    # label="Opt. General Observable",
-    # )
-
-    # # SLD Basis CCRB sensitivity
-    # if opt_sld_ccrb is not None:
-    # axes[3].plot(
-    # omega_list,
-    # opt_sld_ccrb,
-    # marker="*",
-    # linestyle="-",
-    # linewidth=2.5,
-    # color="cyan",
-    # markersize=6,
-    # label="Opt. SLD Basis",
-    # )
-
-    # # SLD Projected CCRB sensitivity
-    # if opt_sld_proj_ccrb is not None:
-    # axes[3].plot(
-    # omega_list,
-    # opt_sld_proj_ccrb,
-    # marker="X",
-    # linestyle=":",
-    # linewidth=2.0,
-    # color="magenta",
-    # markersize=6,
-    # label="Opt. SLD Projected",
-    # )
-
-    # # Also plot the QCRB at the optimal time for comparison
-    # axes[3].plot(
-    # omega_list,
-    # min_qcrb_per_omega,
-    # marker="s",
-    # linestyle="--",
-    # color="black",
-    # linewidth=2,
-    # label="QCRB sensitivity (Quantum Limit)",
-    # )
-
-    # axes[3].axvline(
-    # optimal_omega,
-    # color="red",
-    # linestyle="--",
-    # label=rf"Optimal $\Omega$ = {optimal_omega:.2f}",
-    # )
-    # axes[3].set_xlabel(r"Transverse Field ($\Omega$)")
-    # axes[3].set_ylabel(r"Sensitivity $\sqrt{t/F}$")
-    # axes[3].set_title(r"Sensitivity of Measurements at Optimal Time vs $\Omega$")
-    # axes[3].grid(True, linestyle=":")
-    # axes[3].legend(fontsize=7)
-    axes[3].set_visible(False)  # CFI/CCRB panel commented out
-
+    axes[3].set_visible(False)
     plt.tight_layout()
     plt.savefig(output_figure, bbox_inches="tight")
     plt.show()
 
 
-# ============================================================
-# Main
-# ============================================================
-
-
-def main():
+def main() -> None:
     cfg = SimulationConfig()
-
     tlist = np.linspace(cfg.t_min, cfg.t_max, cfg.n_steps)
     omega_list = np.linspace(cfg.omega_min, cfg.omega_max, cfg.n_omegas)
 
     qfi_matrix = np.zeros((len(omega_list), len(tlist)))
-    L_all = []
-    rho_all_list = []  # rho_all_list[i][k]  = rho   at omega i, time k
-    drho_all_list = []  # drho_all_list[i][k] = drho  at omega i, time k
+    sld_trajectories: list[list[np.ndarray]] = []
 
-    # --- Define measurements for CFI ---
-    # Make it easy to add or change observables here.
-    ops = build_spin_operators(cfg.N)
-    Jx = qt.jmat(ops["S_spin"], "x").full() * 2.0
-    Jy = qt.jmat(ops["S_spin"], "y").full() * 2.0
-    Jz = qt.jmat(ops["S_spin"], "z").full() * 2.0
-
-    # measurements = {
-    # "X": Jx,
-    # "Y": Jy,
-    # "Z": Jz,
-    # "X^2": Jx @ Jx,
-    # "Y^2": Jy @ Jy,
-    # "Z^2": Jz @ Jz,
-    # }
-
-    # measurement_projectors = {
-    # name: get_measurement_projectors(O) for name, O in measurements.items()
-    # }
-
-    # cfi_matrices = {
-    # name: np.zeros((len(omega_list), len(tlist))) for name in measurements
-    # }
-    # ------------------------------------
+    bath_operators = build_bath_operators(cfg.N)
+    Jy = bath_operators["Jy"]
+    Jz = bath_operators["Jz"]
 
     print(f"Computing bath-only QFI for {len(omega_list)} values of Omega_0...")
-
-    for i, Omega in enumerate(omega_list):
-        if (i + 1) % 5 == 0 or i == 0:
-            print(f"Processed {i + 1}/{len(omega_list)} Omega_0 values")
+    for index, Omega_0 in enumerate(omega_list):
+        if (index + 1) % 5 == 0 or index == 0:
+            print(f"Processed {index + 1}/{len(omega_list)} Omega_0 values")
 
         bath_rhos_plus = get_bath_density_matrices(
-            Omega_0=Omega,
+            Omega_0=Omega_0,
             J=cfg.J_nominal + cfg.dJ,
             tlist=tlist,
             N=cfg.N,
             gamma=cfg.gamma,
             beta=cfg.beta,
         )
-
         bath_rhos_minus = get_bath_density_matrices(
-            Omega_0=Omega,
+            Omega_0=Omega_0,
             J=cfg.J_nominal - cfg.dJ,
             tlist=tlist,
             N=cfg.N,
             gamma=cfg.gamma,
             beta=cfg.beta,
         )
-
-        qfi_t, L_t, rho_t, drho_t = compute_bath_qfi_trajectory(
+        qfi_t, sld_t, _, _ = compute_bath_qfi_trajectory(
             bath_rhos_plus=bath_rhos_plus,
             bath_rhos_minus=bath_rhos_minus,
             dJ=cfg.dJ,
             tol=cfg.qfi_tol,
         )
+        qfi_matrix[index, :] = qfi_t
+        sld_trajectories.append(sld_t)
 
-        qfi_matrix[i, :] = qfi_t
-        L_all.append(L_t)
-        rho_all_list.append(rho_t)
-        drho_all_list.append(drho_t)
-
-        # for k in range(len(tlist)):
-        # for name, projs in measurement_projectors.items():
-        # cfi_matrices[name][i, k] = compute_cfi_from_projectors(
-        # rho_t[k], drho_t[k], projs
-        # )
-
-    # Minimize sensitivity: sqrt((t + t_overhead) / F_Q).
-    # The overhead is the per-shot dead time (state prep + measurement), so the
-    # rate of information gain is F_Q / (t + t_overhead), not F_Q / t.
-    t_cycle = tlist + cfg.t_overhead
-    qcrb_matrix = np.sqrt(t_cycle[None, :] / (qfi_matrix + cfg.qcrb_eps))
+    qcrb_matrix, qcrb_unnormalized_matrix, optimal_time_idx = (
+        compute_qcrb_matrices(
+            qfi_matrix=qfi_matrix,
+            tlist=tlist,
+            t_overhead=cfg.t_overhead,
+            qcrb_eps=cfg.qcrb_eps,
+        )
+    )
     min_qcrb_per_omega = np.min(qcrb_matrix, axis=1)
-
-    # Also retain the QCRB without time normalization. Its optimum can occur at
-    # a different time and Omega, so minimize it independently over time.
-    qcrb_unnormalized_matrix = 1.0 / np.sqrt(qfi_matrix + cfg.qcrb_eps)
-    min_qcrb_unnormalized_per_omega = np.min(qcrb_unnormalized_matrix, axis=1)
-
-    # Optimal time t*(Omega): the time at which the QCRB sensitivity is minimised for each Omega
-    optimal_time_idx = np.argmin(qcrb_matrix, axis=1)
+    min_qcrb_unnormalized_per_omega = np.min(
+        qcrb_unnormalized_matrix, axis=1
+    )
     optimal_times = tlist[optimal_time_idx]
 
-    optimal_idx = np.argmin(min_qcrb_per_omega)
+    optimal_idx = int(np.argmin(min_qcrb_per_omega))
     optimal_omega = omega_list[optimal_idx]
 
-    # Calculate optimal YZ plane squeezing quadrature angle for each Omega at optimal time
-    # (Jy, Jz already computed above as numpy matrices)
     Jyz = Jy @ Jz + Jz @ Jy
     Jy2_minus_Jz2 = Jy @ Jy - Jz @ Jz
-
     opt_quadrature_angles = np.zeros(len(omega_list))
-    for i in range(len(omega_list)):
-        t_idx = optimal_time_idx[i]
-        L_opt = L_all[i][t_idx]
-        cyz = np.real(np.trace(L_opt @ Jyz))
-        cy2z2 = np.real(np.trace(L_opt @ Jy2_minus_Jz2))
-        opt_quadrature_angles[i] = 0.5 * np.arctan2(cyz, cy2z2)
-
-    # # Extract sensitivity (CCRB) at each observable's own individually optimal time
-    # opt_ccrb_results = {name: np.zeros(len(omega_list)) for name in measurements}
-    # for i in range(len(omega_list)):
-    # for name in measurements:
-    # # We want to minimize sqrt((t + t_overhead) / CFI) over all times
-    # ccrb_t = np.sqrt(t_cycle / (cfi_matrices[name][i, :] + cfg.qcrb_eps))
-    # best_t_idx = np.argmin(ccrb_t)
-    # opt_ccrb_results[name][i] = ccrb_t[best_t_idx]
+    for index, time_index in enumerate(optimal_time_idx):
+        optimal_sld = sld_trajectories[index][time_index]
+        cyz = np.real(np.trace(optimal_sld @ Jyz))
+        cy2z2 = np.real(np.trace(optimal_sld @ Jy2_minus_Jz2))
+        opt_quadrature_angles[index] = 0.5 * np.arctan2(cyz, cy2z2)
 
     print("\nDone.")
     print(f"Optimal Omega_0 (bath-only QFI criterion): {optimal_omega:.6f}")
-    print(f"Minimum bath-only QCRB sensitivity: {min_qcrb_per_omega[optimal_idx]:.6e}")
-    unnormalized_optimal_idx = np.argmin(min_qcrb_unnormalized_per_omega)
+    print(
+        "Minimum bath-only QCRB sensitivity: "
+        f"{min_qcrb_per_omega[optimal_idx]:.6e}"
+    )
+    unnormalized_optimal_idx = int(
+        np.argmin(min_qcrb_unnormalized_per_omega)
+    )
     print(
         "Minimum unnormalized bath-only QCRB: "
         f"{min_qcrb_unnormalized_per_omega[unnormalized_optimal_idx]:.6e} "
         f"at Omega_0={omega_list[unnormalized_optimal_idx]:.6f}"
     )
     print(f"Optimal time at best Omega_0: {optimal_times[optimal_idx]:.6f}")
-
-    # # ----------------------------------------------------------------
-    # # Optimize the general observable at global (Omega_0*, t_quantum*),
-    # # then evaluate its CCRB sensitivity at each Omega_0 using each observable's own
-    # # individually optimal time (min over all t).
-    # # ----------------------------------------------------------------
-    # rho_all = rho_all_list
-    # drho_all = drho_all_list
-
-    # print("\nOptimizing general observable parameters at optimal Omega_0...")
-    # rho_opt = rho_all[optimal_idx][optimal_time_idx[optimal_idx]]
-    # drho_opt = drho_all[optimal_idx][optimal_time_idx[optimal_idx]]
-
-    # best_params, best_cfi_val = find_optimal_observable_params(
-    # rho=rho_opt, drho=drho_opt, Jx=Jx, Jy=Jy, Jz=Jz
-    # )
-    # a_x, a_y, a_z, b_xx, b_yy, b_zz, b_xy, b_xz, b_yz, c_xz2, c_yz2, c_z3, c_xyz = (
-    # best_params
-    # )
-    # qfi_opt_val = qfi_matrix[optimal_idx, optimal_time_idx[optimal_idx]]
-    # t_opt_best = optimal_times[optimal_idx]
-    # cfi_sens_opt = np.sqrt((t_opt_best + cfg.t_overhead) / (best_cfi_val + cfg.qcrb_eps))
-    # qfi_sens_opt = min_qcrb_per_omega[optimal_idx]
-
-    # print(f"  Optimal CFI (general observable): {best_cfi_val:.6e}")
-    # print(f"  QFI at that point              : {qfi_opt_val:.6e}")
-    # print(f"  Optimal CFI sensitivity        : {cfi_sens_opt:.6e}")
-    # print(f"  QFI sensitivity at that point  : {qfi_sens_opt:.6e}")
-    # print(f"  Parameters:")
-    # print(f"    a_x={a_x:.4f}, a_y={a_y:.4f}, a_z={a_z:.4f}")
-    # print(f"    b_xx={b_xx:.4f}, b_yy={b_yy:.4f}, b_zz={b_zz:.4f}")
-    # print(f"    b_xy={b_xy:.4f}, b_xz={b_xz:.4f}, b_yz={b_yz:.4f}")
-    # print(
-    # f"    c_xz2={c_xz2:.4f}, c_yz2={c_yz2:.4f}, c_z3={c_z3:.4f}, c_xyz={c_xyz:.4f}"
-    # )
-
-    # # Build the fixed optimal observable (normalized)
-    # O_best = build_general_observable(best_params, Jx, Jy, Jz)
-    # norm_best = np.linalg.norm(O_best, ord="fro")
-    # if norm_best > 1e-15:
-    # O_best = O_best / norm_best
-    # projectors_best = get_measurement_projectors(O_best)
-
-    # # Scan all Omega_0 values: for each Omega_0 take the best time for this observable to minimize sensitivity
-    # print(
-    # "Computing sensitivity of optimal general observable for all Omega_0 values (individual optimal time)..."
-    # )
-    # opt_general_ccrb = np.zeros(len(omega_list))
-    # for i in range(len(omega_list)):
-    # best_ccrb_i = np.inf
-    # for k in range(len(tlist)):
-    # cfi_k = compute_cfi_from_projectors(
-    # rho_all[i][k], drho_all[i][k], projectors_best
-    # )
-    # ccrb_k = np.sqrt(t_cycle[k] / (cfi_k + cfg.qcrb_eps))
-    # if ccrb_k < best_ccrb_i:
-    # best_ccrb_i = ccrb_k
-    # opt_general_ccrb[i] = best_ccrb_i
-
-    # print(
-    # "Computing sensitivity of SLD basis for all Omega_0 values (individual optimal time)..."
-    # )
-    # L_opt_global = L_all[optimal_idx][optimal_time_idx[optimal_idx]]
-
-    # print("\nProjection of SLD onto raw operator basis (Fisher metric):")
-    # Jz2 = Jz @ Jz
-    # Jyz = Jy @ Jz + Jz @ Jy
-    # basis_operators = {
-    # "Jx": Jx,
-    # "Jy": Jy,
-    # "Jz": Jz,
-    # "Jx2": Jx @ Jx,
-    # "Jy2": Jy @ Jy,
-    # "Jz2": Jz2,
-    # "Jxy": Jx @ Jy + Jy @ Jx,
-    # "Jxz": Jx @ Jz + Jz @ Jx,
-    # "Jyz": Jyz,
-    # "Jxz2": Jx @ Jz2 + Jz2 @ Jx,
-    # "Jyz2": Jy @ Jz2 + Jz2 @ Jy,
-    # "Jz3": Jz2 @ Jz,
-    # "Jxyz": Jx @ Jyz + Jyz @ Jx,
-    # }
-
-    # basis_names = list(basis_operators.keys())
-    # basis_ops = list(basis_operators.values())
-
-    # O_sld_proj, alpha = fisher_metric_project_sld(rho_opt, drho_opt, basis_ops)
-
-    # for name, coef in zip(basis_names, alpha):
-    # print(f"    {name}: {np.real(coef):.6f}")
-
-    # norm_sld_proj = np.linalg.norm(O_sld_proj, ord="fro")
-    # if norm_sld_proj > 1e-15:
-    # O_sld_proj = O_sld_proj / norm_sld_proj
-
-    # projectors_SLD = get_measurement_projectors(L_opt_global)
-    # projectors_sld_proj = get_measurement_projectors(O_sld_proj)
-
-    # opt_sld_ccrb = np.zeros(len(omega_list))
-    # opt_sld_proj_ccrb = np.zeros(len(omega_list))
-
-    # for i in range(len(omega_list)):
-    # best_ccrb_i = np.inf
-    # best_proj_ccrb_i = np.inf
-    # for k in range(len(tlist)):
-    # cfi_k = compute_cfi_from_projectors(
-    # rho_all[i][k], drho_all[i][k], projectors_SLD
-    # )
-    # ccrb_k = np.sqrt(t_cycle[k] / (cfi_k + cfg.qcrb_eps))
-    # if ccrb_k < best_ccrb_i:
-    # best_ccrb_i = ccrb_k
-
-    # proj_cfi_k = compute_cfi_from_projectors(
-    # rho_all[i][k], drho_all[i][k], projectors_sld_proj
-    # )
-    # proj_ccrb_k = np.sqrt(t_cycle[k] / (proj_cfi_k + cfg.qcrb_eps))
-    # if proj_ccrb_k < best_proj_ccrb_i:
-    # best_proj_ccrb_i = proj_ccrb_k
-
-    # opt_sld_ccrb[i] = best_ccrb_i
-    # opt_sld_proj_ccrb[i] = best_proj_ccrb_i
 
     plot_qfi_results(
         tlist=tlist,
@@ -915,10 +288,6 @@ def main():
         min_qcrb_unnormalized_per_omega=min_qcrb_unnormalized_per_omega,
         optimal_times=optimal_times,
         opt_quadrature_angles=opt_quadrature_angles,
-        # opt_ccrb_results=opt_ccrb_results,
-        # opt_general_ccrb=opt_general_ccrb,
-        # opt_sld_ccrb=opt_sld_ccrb,
-        # opt_sld_proj_ccrb=opt_sld_proj_ccrb,
         output_figure=cfg.output_figure,
     )
 
