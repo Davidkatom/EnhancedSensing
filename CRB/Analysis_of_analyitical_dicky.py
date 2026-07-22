@@ -13,9 +13,12 @@ try:
         build_hamiltonian,
         build_initial_state,
         build_spin_operators,
+        coherent_bath_state,
         compute_bath_qfi_trajectory,
         compute_qcrb_matrices,
         get_bath_density_matrices,
+        observable_moment_fisher,
+        observable_projective_fisher,
         qfi_from_rho_and_drho,
     )
 except ModuleNotFoundError:  # Allow: python CRB/Analysis_of_analyitical_dicky.py
@@ -25,20 +28,44 @@ except ModuleNotFoundError:  # Allow: python CRB/Analysis_of_analyitical_dicky.p
         build_hamiltonian,
         build_initial_state,
         build_spin_operators,
+        coherent_bath_state,
         compute_bath_qfi_trajectory,
         compute_qcrb_matrices,
         get_bath_density_matrices,
+        observable_moment_fisher,
+        observable_projective_fisher,
         qfi_from_rho_and_drho,
     )
 
 
 @dataclass(frozen=True)
 class SimulationConfig(BaseSimulationConfig):
-    """Dicke-analysis sweep and output configuration."""
+    """Dicke-analysis sweep and output configuration.
 
+    The system-size and noise knobs below are inherited from
+    ``BaseSimulationConfig`` (``crb_core.py``) and re-declared here so every
+    control lives in one place.  Other inherited fields
+    (``J_nominal``, ``dJ``, ``t_min``, ``t_max``, ``n_steps``, ``t_overhead``,
+    tolerances) can be overridden the same way.
+    """
+
+    # --- System size and central-spin noise (inherited defaults surfaced) ---
+    N: int = 10            # number of bath spins (bath Hilbert dim = N + 1)
+    gamma: float = 0.0    # central-spin sigma_z DEPHASING rate
+    beta: float = 0.0     # central-spin sigma_x BIT-FLIP rate -- this is NOISE,
+    #                       not the probe angle.  Set to 0.0 for a noiseless run.
+
+    # --- Transverse-drive (Omega_0) sweep ---
     omega_min: float = 0.0
     omega_max: float = 40.0
     n_omegas: int = 20
+
+    # --- Initial bath probe angle ---
+    # Spin-N/2 coherent state at polar angle probe_beta_deg from +z (the paper's
+    # angle beta; 90 deg = equatorial +x, the prior default).  The central spin
+    # stays in |+x>; only the bath is tilted.  THIS field is the probe-angle knob.
+    probe_beta_deg: float = 45.0
+
     output_figure: str = "bath_only_qfi_analysis.png"
 
 
@@ -47,9 +74,12 @@ def plot_qfi_results(
     omega_list: np.ndarray,
     min_qcrb_per_omega: np.ndarray,
     min_qcrb_unnormalized_per_omega: np.ndarray,
+    min_ccrb_per_omega: np.ndarray,
+    min_ccrb_unnormalized_per_omega: np.ndarray,
     optimal_times: np.ndarray,
     opt_quadrature_angles: np.ndarray,
     output_figure: str,
+    probe_beta_deg: float,
 ) -> None:
     """Plot QCRB minima, optimal times, and optimal quadrature angles."""
     optimal_idx = int(np.argmin(min_qcrb_per_omega))
@@ -191,7 +221,59 @@ def plot_qfi_results(
     axes[2].grid(True, linestyle=":")
     axes[2].legend()
 
-    axes[3].set_visible(False)
+    # Fourth panel: quantum QCRB vs the classical CRB of a projective Jy
+    # measurement (log scale).  The mean <Jy> itself is symmetry-pinned to 0, so
+    # its error-propagation CRB is infinite; the information a Jy readout carries
+    # lives in the Jy distribution/variance, which this projective bound uses.
+    axes[3].semilogy(
+        omega_list,
+        min_qcrb_unnormalized_per_omega,
+        marker="s",
+        markersize=4,
+        linestyle="-",
+        color="tab:orange",
+        label=r"Quantum: $\min_t 1/\sqrt{F_Q}$",
+    )
+    axes[3].semilogy(
+        omega_list,
+        min_ccrb_unnormalized_per_omega,
+        marker="+",
+        markersize=7,
+        linestyle="--",
+        color="tab:orange",
+        label=r"Classical $\langle J_y\rangle$: $\min_t 1/\sqrt{F_{\mathrm{cl}}}$",
+    )
+    axes[3].semilogy(
+        omega_list,
+        min_qcrb_per_omega,
+        marker="o",
+        markersize=4,
+        linestyle="-",
+        color="tab:blue",
+        label=r"Quantum: $\min_t\sqrt{(t+t_{\mathrm{oh}})/F_Q}$",
+    )
+    axes[3].semilogy(
+        omega_list,
+        min_ccrb_per_omega,
+        marker="x",
+        markersize=5,
+        linestyle="--",
+        color="tab:blue",
+        label=r"Classical $\langle J_y\rangle$: $\min_t\sqrt{(t+t_{\mathrm{oh}})/F_{\mathrm{cl}}}$",
+    )
+    axes[3].set_xlabel(r"Transverse Field ($\Omega$)")
+    axes[3].set_ylabel(r"CRB $\delta J$ (log scale)")
+    axes[3].set_title(
+        r"Quantum QCRB vs classical $\langle J_y\rangle$-readout CRB"
+    )
+    axes[3].grid(True, which="both", linestyle=":")
+    axes[3].legend(fontsize=7)
+
+    fig.suptitle(
+        rf"Bath probe: coherent state at $\beta={probe_beta_deg:g}^\circ$ "
+        r"from $+z$ (central spin $|{+}x\rangle$)",
+        y=1.01,
+    )
     plt.tight_layout()
     plt.savefig(output_figure, bbox_inches="tight")
     plt.show()
@@ -203,12 +285,19 @@ def main() -> None:
     omega_list = np.linspace(cfg.omega_min, cfg.omega_max, cfg.n_omegas)
 
     qfi_matrix = np.zeros((len(omega_list), len(tlist)))
+    fisher_jy_moment_matrix = np.zeros((len(omega_list), len(tlist)))
+    fisher_jy_proj_matrix = np.zeros((len(omega_list), len(tlist)))
     sld_trajectories: list[list[np.ndarray]] = []
 
     bath_operators = build_bath_operators(cfg.N)
     Jy = bath_operators["Jy"]
     Jz = bath_operators["Jz"]
+    probe_state = coherent_bath_state(cfg.N, np.deg2rad(cfg.probe_beta_deg))
 
+    print(
+        f"Initial bath probe: coherent state at beta={cfg.probe_beta_deg:g} deg "
+        "from +z (central spin |+x>)"
+    )
     print(f"Computing bath-only QFI for {len(omega_list)} values of Omega_0...")
     for index, Omega_0 in enumerate(omega_list):
         if (index + 1) % 5 == 0 or index == 0:
@@ -221,6 +310,7 @@ def main() -> None:
             N=cfg.N,
             gamma=cfg.gamma,
             beta=cfg.beta,
+            bath_state=probe_state,
         )
         bath_rhos_minus = get_bath_density_matrices(
             Omega_0=Omega_0,
@@ -229,8 +319,9 @@ def main() -> None:
             N=cfg.N,
             gamma=cfg.gamma,
             beta=cfg.beta,
+            bath_state=probe_state,
         )
-        qfi_t, sld_t, _, _ = compute_bath_qfi_trajectory(
+        qfi_t, sld_t, rho_t, drho_t = compute_bath_qfi_trajectory(
             bath_rhos_plus=bath_rhos_plus,
             bath_rhos_minus=bath_rhos_minus,
             dJ=cfg.dJ,
@@ -238,6 +329,18 @@ def main() -> None:
         )
         qfi_matrix[index, :] = qfi_t
         sld_trajectories.append(sld_t)
+
+        # Classical Fisher information for a Jy readout, reusing the QFI's rho
+        # and d(rho)/dJ.  Two versions: the MEAN <Jy> (error propagation) and a
+        # full PROJECTIVE Jy measurement (all outcomes / the Jy distribution).
+        fisher_jy_moment_matrix[index, :] = [
+            observable_moment_fisher(rho_t[k], drho_t[k], Jy, var_floor=cfg.qfi_tol)
+            for k in range(len(tlist))
+        ]
+        fisher_jy_proj_matrix[index, :] = [
+            observable_projective_fisher(rho_t[k], drho_t[k], Jy, tol=cfg.qfi_tol)
+            for k in range(len(tlist))
+        ]
 
     qcrb_matrix, qcrb_unnormalized_matrix, optimal_time_idx = (
         compute_qcrb_matrices(
@@ -252,6 +355,26 @@ def main() -> None:
         qcrb_unnormalized_matrix, axis=1
     )
     optimal_times = tlist[optimal_time_idx]
+
+    # Classical Jy-measurement CRB (projective / full distribution), minimized
+    # over t with the same normalization as the QCRB.
+    ccrb_matrix, ccrb_unnormalized_matrix, _ = compute_qcrb_matrices(
+        qfi_matrix=fisher_jy_proj_matrix,
+        tlist=tlist,
+        t_overhead=cfg.t_overhead,
+        qcrb_eps=cfg.qcrb_eps,
+    )
+    min_ccrb_per_omega = np.min(ccrb_matrix, axis=1)
+    min_ccrb_unnormalized_per_omega = np.min(ccrb_unnormalized_matrix, axis=1)
+    # Drop drives where even the full Jy measurement carries no J-signal.
+    no_jy_signal = fisher_jy_proj_matrix.max(axis=1) < 1e-9
+    min_ccrb_per_omega[no_jy_signal] = np.nan
+    min_ccrb_unnormalized_per_omega[no_jy_signal] = np.nan
+
+    # The MEAN <Jy> is symmetry-pinned to 0 (V = sigma_x (x) exp(-i pi Jx)
+    # commutes with H and sends Jy -> -Jy), so its error-propagation CRB is
+    # infinite; record the residual to confirm the cancellation numerically.
+    max_moment_fisher = float(fisher_jy_moment_matrix.max())
 
     optimal_idx = int(np.argmin(min_qcrb_per_omega))
     optimal_omega = omega_list[optimal_idx]
@@ -281,14 +404,28 @@ def main() -> None:
     )
     print(f"Optimal time at best Omega_0: {optimal_times[optimal_idx]:.6f}")
 
+    if np.all(np.isnan(min_ccrb_unnormalized_per_omega)):
+        print("Classical <Jy> readout: no J-signal at any swept Omega_0.")
+    else:
+        best_cl_idx = int(np.nanargmin(min_ccrb_unnormalized_per_omega))
+        print(
+            "Best classical <Jy>-readout CRB (unnormalized): "
+            f"{min_ccrb_unnormalized_per_omega[best_cl_idx]:.6e} "
+            f"at Omega_0={omega_list[best_cl_idx]:.6f} "
+            f"(quantum there: {min_qcrb_unnormalized_per_omega[best_cl_idx]:.6e})"
+        )
+
     plot_qfi_results(
         tlist=tlist,
         omega_list=omega_list,
         min_qcrb_per_omega=min_qcrb_per_omega,
         min_qcrb_unnormalized_per_omega=min_qcrb_unnormalized_per_omega,
+        min_ccrb_per_omega=min_ccrb_per_omega,
+        min_ccrb_unnormalized_per_omega=min_ccrb_unnormalized_per_omega,
         optimal_times=optimal_times,
         opt_quadrature_angles=opt_quadrature_angles,
         output_figure=cfg.output_figure,
+        probe_beta_deg=cfg.probe_beta_deg,
     )
 
 

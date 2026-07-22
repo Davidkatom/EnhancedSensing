@@ -92,6 +92,41 @@ def build_hamiltonian(Omega_0: float, J: float, N: int) -> qt.Qobj:
     )
 
 
+def optimal_sz2_bath_state(N: int) -> np.ndarray:
+    """Return the optimal probe state for the coefficient of an ``S_z^2`` generator.
+
+    Following arXiv:0710.0285 (Boixo et al.), the optimal initial state for
+    estimating ``gamma`` in ``exp(-i gamma t h)`` is the equal superposition of
+    the eigenstates of ``h`` with the largest and smallest eigenvalues.  For
+    ``h = S_z^2`` these are ``|m = N/2>`` and the state closest to ``m = 0``
+    (exactly ``m = 0`` for even ``N``).
+    """
+    if N < 1:
+        raise ValueError("N must be positive")
+
+    s_vals = 2.0 * np.real(np.diag(qt.jmat(N / 2.0, "z").full()))
+    idx_max = int(np.argmax(s_vals**2))
+    idx_min = int(np.argmin(s_vals**2))
+    state = np.zeros(N + 1, dtype=complex)
+    state[[idx_max, idx_min]] = 1.0 / np.sqrt(2.0)
+    return state
+
+
+def coherent_bath_state(N: int, theta: float, phi: float = 0.0) -> np.ndarray:
+    """Return the spin-``N/2`` coherent state at polar angle ``theta`` from +z.
+
+    This is the product-state probe parametrized by the paper's angle ``beta``
+    (arXiv:0710.0285), where the coherent state is produced from the north-pole
+    state ``|m = N/2>`` by a rotation ``theta`` about ``y``.  ``theta = pi/2`` is
+    the equatorial ``+x`` state used as the default elsewhere; ``theta -> 0``
+    approaches the ``|m = N/2>`` eigenstate of ``S_z``.
+    """
+    if N < 1:
+        raise ValueError("N must be positive")
+
+    return qt.spin_coherent(N / 2.0, theta, phi).full().ravel().astype(complex)
+
+
 def build_bath_operators(N: int) -> dict[str, np.ndarray]:
     """Return dense collective bath operators using the solver's scaling."""
     if N < 0:
@@ -118,12 +153,16 @@ def get_bath_density_matrices(
     N: int = 10,
     gamma: float = 1.0,
     beta: float = 1.0,
+    bath_state: np.ndarray | None = None,
 ) -> list[np.ndarray]:
     """Evolve and return ``rho_B(t) = Tr_central[rho(t)]``.
 
     Each bath coherence closes on a four-dimensional central-spin block.  The
     resulting independent constant-coefficient Liouvillians are solved by
     eigendecomposition, avoiding construction of the full superoperator.
+
+    The initial state is ``|+x>_central (x) bath_state``, where ``bath_state``
+    defaults to the ``+x`` spin coherent state used by the legacy analyses.
     """
     if N < 0:
         raise ValueError("N must be non-negative")
@@ -137,7 +176,15 @@ def get_bath_density_matrices(
 
     # Ordering matches qt.jmat and qt.spin_coherent.
     s_vals = 2.0 * np.real(np.diag(qt.jmat(S_spin, "z").full()))
-    chi = qt.spin_coherent(S_spin, np.pi / 2.0, 0.0).full().ravel()
+    if bath_state is None:
+        chi = qt.spin_coherent(S_spin, np.pi / 2.0, 0.0).full().ravel()
+    else:
+        chi = np.asarray(bath_state, dtype=complex).ravel()
+        if chi.shape[0] != dim_bath:
+            raise ValueError(
+                f"bath_state must have dimension N + 1 = {dim_bath}, "
+                f"got {chi.shape[0]}"
+            )
 
     sx = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
     sz = np.array([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
@@ -280,6 +327,62 @@ def compute_bath_qfi_trajectory(
     return qfi_t, sld_t, rho_t, drho_t
 
 
+def observable_moment_fisher(
+    rho: np.ndarray,
+    drho: np.ndarray,
+    observable: np.ndarray,
+    var_floor: float = 1e-12,
+) -> float:
+    """Classical Fisher information for estimating a parameter from the *mean*
+    of a single observable ``A`` (method of moments / error propagation):
+
+        F_cl = (d<A>/dtheta)^2 / Var(A),
+        <A> = Tr[rho A],   Var(A) = Tr[rho A^2] - <A>^2,   d<A> = Tr[drho A].
+
+    The associated classical CRB is ``1/sqrt(F_cl) = sqrt(Var A)/|d<A>|`` -- the
+    precision achievable by reading out ``<A>`` alone.  It satisfies
+    ``F_cl <= F_Q``, so this bound never beats the QFI.  ``var_floor`` guards the
+    division when the state is (near) an eigenstate of ``A``.
+    """
+    A = np.asarray(observable, dtype=complex)
+    rho = 0.5 * (rho + rho.conj().T)
+    drho = 0.5 * (drho + drho.conj().T)
+    mean = float(np.real(np.trace(rho @ A)))
+    variance = float(np.real(np.trace(rho @ (A @ A)))) - mean * mean
+    variance = max(variance, var_floor)
+    derivative_of_mean = float(np.real(np.trace(drho @ A)))
+    return derivative_of_mean * derivative_of_mean / variance
+
+
+def observable_projective_fisher(
+    rho: np.ndarray,
+    drho: np.ndarray,
+    observable: np.ndarray,
+    tol: float = 1e-12,
+) -> float:
+    """Classical Fisher information of a *projective* measurement of ``A``.
+
+    Diagonalizing ``A = sum_k a_k |k><k|``, the outcome probabilities are
+    ``p_k = <k|rho|k>`` with derivatives ``dp_k = <k|drho|k>``, giving
+
+        F_cl = sum_{k : p_k > tol} (dp_k)^2 / p_k.
+
+    Unlike :func:`observable_moment_fisher`, this uses the full outcome
+    distribution (all moments of ``A``), not just the mean, so it captures
+    parameter dependence hidden in the variance.  It still obeys
+    ``F_cl <= F_Q``.
+    """
+    A = np.asarray(observable, dtype=complex)
+    A = 0.5 * (A + A.conj().T)
+    rho = 0.5 * (rho + rho.conj().T)
+    drho = 0.5 * (drho + drho.conj().T)
+    _, eigenvectors = np.linalg.eigh(A)
+    probabilities = np.real(np.diag(eigenvectors.conj().T @ rho @ eigenvectors))
+    derivatives = np.real(np.diag(eigenvectors.conj().T @ drho @ eigenvectors))
+    valid = probabilities > tol
+    return float(np.sum(derivatives[valid] ** 2 / probabilities[valid]))
+
+
 # ---------------------------------------------------------------------------
 # QCRB utilities
 # ---------------------------------------------------------------------------
@@ -418,12 +521,16 @@ __all__ = [
     "build_hamiltonian",
     "build_initial_state",
     "build_spin_operators",
+    "coherent_bath_state",
     "compute_bath_qfi_trajectory",
     "compute_qcrb_matrices",
     "fisher_metric_projection",
     "fit_power_law",
     "frobenius_orthonormal_span",
     "get_bath_density_matrices",
+    "observable_moment_fisher",
+    "observable_projective_fisher",
+    "optimal_sz2_bath_state",
     "qfi_from_rho_and_drho",
     "qfi_vectorized",
 ]
