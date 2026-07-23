@@ -50,9 +50,9 @@ class SimulationConfig(BaseSimulationConfig):
     """
 
     # --- System size and central-spin noise (inherited defaults surfaced) ---
-    N: int = 10            # number of bath spins (bath Hilbert dim = N + 1)
+    N: int = 60            # number of bath spins (bath Hilbert dim = N + 1)
     gamma: float = 0.0    # central-spin sigma_z DEPHASING rate
-    beta: float = 0.0     # central-spin sigma_x BIT-FLIP rate -- this is NOISE,
+    beta: float = 0.3     # central-spin sigma_x BIT-FLIP rate -- this is NOISE,
     #                       not the probe angle.  Set to 0.0 for a noiseless run.
 
     # --- Transverse-drive (Omega_0) sweep ---
@@ -252,7 +252,7 @@ def plot_qfi_results(
         color="tab:blue",
         label=r"Quantum: $\min_t\sqrt{(t+t_{\mathrm{oh}})/F_Q}$",
     )
-    axes[3].semilogy(
+    axes[3].plot(
         omega_list,
         min_ccrb_per_omega,
         marker="x",
@@ -262,7 +262,7 @@ def plot_qfi_results(
         label=r"Classical $\langle J_y\rangle$: $\min_t\sqrt{(t+t_{\mathrm{oh}})/F_{\mathrm{cl}}}$",
     )
     axes[3].set_xlabel(r"Transverse Field ($\Omega$)")
-    axes[3].set_ylabel(r"CRB $\delta J$ (log scale)")
+    axes[3].set_ylabel(r"CRB $\delta J$ ")
     axes[3].set_title(
         r"Quantum QCRB vs classical $\langle J_y\rangle$-readout CRB"
     )
