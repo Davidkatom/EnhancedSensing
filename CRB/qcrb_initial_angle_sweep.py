@@ -57,7 +57,7 @@ class SimulationConfig(BaseSimulationConfig):
     """Sweep and output configuration for the probe-angle QCRB-vs-N analysis."""
 
     # No noise; only the initial-probe angle beta (and the drive panel) vary.
-    gamma: float = 0.3
+    gamma: float = 0.0
     beta: float = 0.0  # central-spin dephasing rate, OFF (not the probe angle)
 
     # One panel per drive.  0 is the linear-generator (SQL) regime; a value

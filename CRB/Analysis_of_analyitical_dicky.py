@@ -1,11 +1,4 @@
-"""Bath-only QFI analysis for the collective Dicke-like model.
-
-The Hamiltonian is
-
-    H = Omega * sigma_x + J * sigma_z * S_z + omega * S_x,
-
-with ``Omega = omega_d * omega`` in this analysis.
-"""
+"""Bath-only QFI analysis for the collective Dicke-like model."""
 
 from dataclasses import dataclass
 
@@ -57,22 +50,21 @@ class SimulationConfig(BaseSimulationConfig):
     """
 
     # --- System size and central-spin noise (inherited defaults surfaced) ---
-    N: int = 20            # number of bath spins (bath Hilbert dim = N + 1)
+    N: int = 60            # number of bath spins (bath Hilbert dim = N + 1)
     gamma: float = 0.0    # central-spin sigma_z DEPHASING rate
-    beta: float = 0.0     # central-spin sigma_x BIT-FLIP rate -- this is NOISE,
+    beta: float = 0.3     # central-spin sigma_x BIT-FLIP rate -- this is NOISE,
     #                       not the probe angle.  Set to 0.0 for a noiseless run.
 
-    # --- Bath transverse-drive sweep and central/bath drive ratio ---
-    omega_d: float = 1.0  # Omega / omega; Omega = omega_d * omega
+    # --- Transverse-drive (Omega_0) sweep ---
     omega_min: float = 0.0
-    omega_max: float = 5.0
+    omega_max: float = 40.0
     n_omegas: int = 20
 
     # --- Initial bath probe angle ---
     # Spin-N/2 coherent state at polar angle probe_beta_deg from +z (the paper's
     # angle beta; 90 deg = equatorial +x, the prior default).  The central spin
     # stays in |+x>; only the bath is tilted.  THIS field is the probe-angle knob.
-    probe_beta_deg: float = 0
+    probe_beta_deg: float = 45.0
 
     output_figure: str = "bath_only_qfi_analysis.png"
 
@@ -88,7 +80,6 @@ def plot_qfi_results(
     opt_quadrature_angles: np.ndarray,
     output_figure: str,
     probe_beta_deg: float,
-    omega_d: float,
 ) -> None:
     """Plot QCRB minima, optimal times, and optimal quadrature angles."""
     optimal_idx = int(np.argmin(min_qcrb_per_omega))
@@ -114,9 +105,9 @@ def plot_qfi_results(
         linestyle="--",
         color="tab:blue",
         alpha=0.65,
-        label=rf"Normalized optimum $\omega$ = {optimal_omega:.2f}",
+        label=rf"Normalized optimum $\Omega$ = {optimal_omega:.2f}",
     )
-    axes[0].set_xlabel(r"Bath transverse field ($\omega$)")
+    axes[0].set_xlabel(r"Transverse Field ($\Omega$)")
     axes[0].set_ylabel(
         r"Time-normalized QCRB $\min_t\sqrt{(t+t_{\mathrm{oh}})/F_Q}$",
         color="tab:blue",
@@ -138,7 +129,7 @@ def plot_qfi_results(
         color="tab:orange",
         alpha=0.75,
         label=(
-            rf"Unnormalized optimum $\omega$ = "
+            rf"Unnormalized optimum $\Omega$ = "
             f"{unnormalized_optimal_omega:.2f}"
         ),
     )
@@ -161,8 +152,6 @@ def plot_qfi_results(
         [handle.get_label() for handle in first_panel_handles],
         fontsize=8,
     )
-    axes[0].set_ylim(0.0, 1.0)
-
 
     axes[1].plot(
         omega_list,
@@ -170,7 +159,7 @@ def plot_qfi_results(
         marker="s",
         linestyle="",
         color="darkorange",
-        label=r"Data $t^*(\omega)$",
+        label=r"Data $t^*(\Omega)$",
     )
 
     def fit_func(omega: np.ndarray, intercept: float, slope: float) -> np.ndarray:
@@ -192,7 +181,7 @@ def plot_qfi_results(
             linestyle="-",
             color="black",
             label=(
-                r"Fit: $T=b+c\omega$"
+                r"Fit: $T=b+c\Omega$"
                 + "\n"
                 + f"b={intercept:.3f}, c={slope:.3e}"
             ),
@@ -204,11 +193,11 @@ def plot_qfi_results(
         optimal_omega,
         color="red",
         linestyle="--",
-        label=rf"Optimal $\omega$ = {optimal_omega:.2f}",
+        label=rf"Optimal $\Omega$ = {optimal_omega:.2f}",
     )
-    axes[1].set_xlabel(r"Bath transverse field ($\omega$)")
+    axes[1].set_xlabel(r"Transverse Field ($\Omega$)")
     axes[1].set_ylabel(r"Optimal time $t^*$")
-    axes[1].set_title(r"Optimal measurement time $t^*$ vs $\omega$")
+    axes[1].set_title(r"Optimal measurement time $t^*$ vs $\Omega$")
     axes[1].grid(True, linestyle=":")
     axes[1].legend()
 
@@ -224,11 +213,11 @@ def plot_qfi_results(
         optimal_omega,
         color="red",
         linestyle="--",
-        label=rf"Optimal $\omega$ = {optimal_omega:.2f}",
+        label=rf"Optimal $\Omega$ = {optimal_omega:.2f}",
     )
-    axes[2].set_xlabel(r"Bath transverse field ($\omega$)")
+    axes[2].set_xlabel(r"Transverse Field ($\Omega$)")
     axes[2].set_ylabel("Angle (radians)")
-    axes[2].set_title(r"Optimal Quadrature Angle vs $\omega$")
+    axes[2].set_title(r"Optimal Quadrature Angle vs $\Omega$")
     axes[2].grid(True, linestyle=":")
     axes[2].legend()
 
@@ -263,7 +252,7 @@ def plot_qfi_results(
         color="tab:blue",
         label=r"Quantum: $\min_t\sqrt{(t+t_{\mathrm{oh}})/F_Q}$",
     )
-    axes[3].semilogy(
+    axes[3].plot(
         omega_list,
         min_ccrb_per_omega,
         marker="x",
@@ -272,8 +261,8 @@ def plot_qfi_results(
         color="tab:blue",
         label=r"Classical $\langle J_y\rangle$: $\min_t\sqrt{(t+t_{\mathrm{oh}})/F_{\mathrm{cl}}}$",
     )
-    axes[3].set_xlabel(r"Bath transverse field ($\omega$)")
-    axes[3].set_ylabel(r"CRB $\delta J$ (log scale)")
+    axes[3].set_xlabel(r"Transverse Field ($\Omega$)")
+    axes[3].set_ylabel(r"CRB $\delta J$ ")
     axes[3].set_title(
         r"Quantum QCRB vs classical $\langle J_y\rangle$-readout CRB"
     )
@@ -282,8 +271,7 @@ def plot_qfi_results(
 
     fig.suptitle(
         rf"Bath probe: coherent state at $\beta={probe_beta_deg:g}^\circ$ "
-        r"from $+z$ (central spin $|{+}x\rangle$); "
-        rf"$\Omega=\omega_d\omega$, $\omega_d={omega_d:g}$",
+        r"from $+z$ (central spin $|{+}x\rangle$)",
         y=1.01,
     )
     plt.tight_layout()
@@ -310,15 +298,10 @@ def main() -> None:
         f"Initial bath probe: coherent state at beta={cfg.probe_beta_deg:g} deg "
         "from +z (central spin |+x>)"
     )
-    print(
-        "Computing bath-only QFI for "
-        f"{len(omega_list)} values of omega with "
-        f"Omega = omega_d * omega (omega_d={cfg.omega_d:g})..."
-    )
-    for index, omega in enumerate(omega_list):
-        Omega_0 = cfg.omega_d * omega
+    print(f"Computing bath-only QFI for {len(omega_list)} values of Omega_0...")
+    for index, Omega_0 in enumerate(omega_list):
         if (index + 1) % 5 == 0 or index == 0:
-            print(f"Processed {index + 1}/{len(omega_list)} omega values")
+            print(f"Processed {index + 1}/{len(omega_list)} Omega_0 values")
 
         bath_rhos_plus = get_bath_density_matrices(
             Omega_0=Omega_0,
@@ -328,7 +311,6 @@ def main() -> None:
             gamma=cfg.gamma,
             beta=cfg.beta,
             bath_state=probe_state,
-            omega=omega,
         )
         bath_rhos_minus = get_bath_density_matrices(
             Omega_0=Omega_0,
@@ -338,7 +320,6 @@ def main() -> None:
             gamma=cfg.gamma,
             beta=cfg.beta,
             bath_state=probe_state,
-            omega=omega,
         )
         qfi_t, sld_t, rho_t, drho_t = compute_bath_qfi_trajectory(
             bath_rhos_plus=bath_rhos_plus,
@@ -408,7 +389,7 @@ def main() -> None:
         opt_quadrature_angles[index] = 0.5 * np.arctan2(cyz, cy2z2)
 
     print("\nDone.")
-    print(f"Optimal omega (bath-only QFI criterion): {optimal_omega:.6f}")
+    print(f"Optimal Omega_0 (bath-only QFI criterion): {optimal_omega:.6f}")
     print(
         "Minimum bath-only QCRB sensitivity: "
         f"{min_qcrb_per_omega[optimal_idx]:.6e}"
@@ -419,18 +400,18 @@ def main() -> None:
     print(
         "Minimum unnormalized bath-only QCRB: "
         f"{min_qcrb_unnormalized_per_omega[unnormalized_optimal_idx]:.6e} "
-        f"at omega={omega_list[unnormalized_optimal_idx]:.6f}"
+        f"at Omega_0={omega_list[unnormalized_optimal_idx]:.6f}"
     )
-    print(f"Optimal time at best omega: {optimal_times[optimal_idx]:.6f}")
+    print(f"Optimal time at best Omega_0: {optimal_times[optimal_idx]:.6f}")
 
     if np.all(np.isnan(min_ccrb_unnormalized_per_omega)):
-        print("Classical <Jy> readout: no J-signal at any swept omega.")
+        print("Classical <Jy> readout: no J-signal at any swept Omega_0.")
     else:
         best_cl_idx = int(np.nanargmin(min_ccrb_unnormalized_per_omega))
         print(
             "Best classical <Jy>-readout CRB (unnormalized): "
             f"{min_ccrb_unnormalized_per_omega[best_cl_idx]:.6e} "
-            f"at omega={omega_list[best_cl_idx]:.6f} "
+            f"at Omega_0={omega_list[best_cl_idx]:.6f} "
             f"(quantum there: {min_qcrb_unnormalized_per_omega[best_cl_idx]:.6e})"
         )
 
@@ -445,7 +426,6 @@ def main() -> None:
         opt_quadrature_angles=opt_quadrature_angles,
         output_figure=cfg.output_figure,
         probe_beta_deg=cfg.probe_beta_deg,
-        omega_d=cfg.omega_d,
     )
 
 
