@@ -3,9 +3,10 @@
 The exact solver in this module uses the symmetric bath subspace and the
 Hamiltonian convention
 
-    H = Omega_0 * sigma_x + J * sigma_z * S_z,
+    H = Omega_0 * sigma_x + J * sigma_z * S_z + omega * S_x,
 
-where ``S_z = 2 * jmat(N / 2, "z")``.  Keeping that convention explicit is
+where ``S_{x,z} = 2 * jmat(N / 2, "x,z")``.  The bath drive ``omega`` defaults
+to zero for backward compatibility.  Keeping that convention explicit is
 important when comparing these helpers with scripts that use a factor of one
 half in either the drive or collective-spin operators.
 """
@@ -55,6 +56,7 @@ def build_spin_operators(N: int) -> dict[str, object]:
 
     S_spin = N / 2.0
     dim_bath = N + 1
+    Jx = 2.0 * qt.jmat(S_spin, "x")
     Jz = 2.0 * qt.jmat(S_spin, "z")
     I_bath = qt.qeye(dim_bath)
 
@@ -65,6 +67,7 @@ def build_spin_operators(N: int) -> dict[str, object]:
     return {
         "S_spin": S_spin,
         "dim_bath": dim_bath,
+        "Jx": Jx,
         "Jz": Jz,
         "I_bath": I_bath,
         "sx": sx,
@@ -72,6 +75,7 @@ def build_spin_operators(N: int) -> dict[str, object]:
         "si": si,
         "sx_s": qt.tensor(sx, I_bath),
         "sz_s": qt.tensor(sz, I_bath),
+        "Sx_op": qt.tensor(si, Jx),
         "Sz_op": qt.tensor(si, Jz),
     }
 
@@ -83,12 +87,18 @@ def build_initial_state(S_spin: float) -> qt.Qobj:
     return qt.tensor(plus_state_central, plus_state_bath)
 
 
-def build_hamiltonian(Omega_0: float, J: float, N: int) -> qt.Qobj:
-    """Return ``Omega_0 sigma_x + J sigma_z S_z`` in the symmetric subspace."""
+def build_hamiltonian(
+    Omega_0: float,
+    J: float,
+    N: int,
+    omega: float = 0.0,
+) -> qt.Qobj:
+    """Return ``Omega_0 sigma_x + J sigma_z S_z + omega S_x``."""
     operators = build_spin_operators(N)
     return (
         Omega_0 * operators["sx_s"]
         + J * operators["sz_s"] * operators["Sz_op"]
+        + omega * operators["Sx_op"]
     )
 
 
@@ -154,12 +164,15 @@ def get_bath_density_matrices(
     gamma: float = 1.0,
     beta: float = 1.0,
     bath_state: np.ndarray | None = None,
+    omega: float = 0.0,
 ) -> list[np.ndarray]:
     """Evolve and return ``rho_B(t) = Tr_central[rho(t)]``.
 
-    Each bath coherence closes on a four-dimensional central-spin block.  The
-    resulting independent constant-coefficient Liouvillians are solved by
-    eigendecomposition, avoiding construction of the full superoperator.
+    With ``omega = 0``, each bath coherence closes on a four-dimensional
+    central-spin block.  The resulting independent constant-coefficient
+    Liouvillians are solved by eigendecomposition.  A nonzero ``omega * S_x``
+    couples those blocks, so the evolution is performed in the full
+    central-spin times symmetric-bath space instead.
 
     The initial state is ``|+x>_central (x) bath_state``, where ``bath_state``
     defaults to the ``+x`` spin coherent state used by the legacy analyses.
@@ -185,6 +198,48 @@ def get_bath_density_matrices(
                 f"bath_state must have dimension N + 1 = {dim_bath}, "
                 f"got {chi.shape[0]}"
             )
+
+    if omega != 0.0:
+        if np.any(times < 0.0) or np.any(np.diff(times) < 0.0):
+            raise ValueError(
+                "tlist must be non-negative and increasing when omega is nonzero"
+            )
+        if len(times) == 0:
+            return []
+
+        operators = build_spin_operators(N)
+        hamiltonian = build_hamiltonian(
+            Omega_0=Omega_0,
+            J=J,
+            N=N,
+            omega=omega,
+        )
+        plus_state_central = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
+        bath_ket = qt.Qobj(chi, dims=[[dim_bath], [1]])
+        initial_state = qt.tensor(plus_state_central, bath_ket)
+
+        collapse_operators = []
+        if beta > 0.0:
+            collapse_operators.append(np.sqrt(beta) * operators["sx_s"])
+        if gamma > 0.0:
+            collapse_operators.append(np.sqrt(gamma) * operators["sz_s"])
+
+        # QuTiP treats the first entry of tlist as the initial time.  Prepending
+        # zero preserves the API's convention that every requested time is
+        # measured from the supplied initial state, even when tlist starts later.
+        prepend_zero = times[0] > 0.0
+        solver_times = (
+            np.concatenate(([0.0], times)) if prepend_zero else times
+        )
+        result = qt.mesolve(
+            hamiltonian,
+            initial_state,
+            solver_times,
+            c_ops=collapse_operators,
+            e_ops=[],
+        )
+        states = result.states[1:] if prepend_zero else result.states
+        return [state.ptrace(1).full() for state in states]
 
     sx = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
     sz = np.array([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
