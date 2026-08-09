@@ -80,11 +80,27 @@ def build_spin_operators(N: int) -> dict[str, object]:
     }
 
 
-def build_initial_state(S_spin: float) -> qt.Qobj:
-    """Return the central ``|+x>`` and bath ``+x`` coherent product state."""
-    plus_state_central = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
+def central_spin_state(theta: float, phi: float = 0.0) -> qt.Qobj:
+    """Return a central-spin pure state at Bloch angles ``theta`` and ``phi``.
+
+    The convention is ``cos(theta/2)|0> + exp(i phi) sin(theta/2)|1>``.
+    Consequently, ``theta = 0`` gives ``|0>`` and ``theta = pi/2, phi = 0``
+    gives the ``|+x>`` state used by the legacy analyses.
+    """
+    return (
+        np.cos(theta / 2.0) * qt.basis(2, 0)
+        + np.exp(1j * phi) * np.sin(theta / 2.0) * qt.basis(2, 1)
+    ).unit()
+
+
+def build_initial_state(
+    S_spin: float,
+    central_theta: float = np.pi / 2.0,
+) -> qt.Qobj:
+    """Return a configurable central spin and bath ``+x`` product state."""
+    initial_central_state = central_spin_state(central_theta)
     plus_state_bath = qt.spin_coherent(S_spin, np.pi / 2.0, 0.0)
-    return qt.tensor(plus_state_central, plus_state_bath)
+    return qt.tensor(initial_central_state, plus_state_bath)
 
 
 def build_hamiltonian(
@@ -156,6 +172,52 @@ def build_bath_operators(N: int) -> dict[str, np.ndarray]:
 # ---------------------------------------------------------------------------
 
 
+def evolve_bath_density_matrix_noiseless(
+    Omega_0: float,
+    J: float,
+    time: float,
+    N: int,
+    bath_state: np.ndarray,
+    omega: float = 0.0,
+    central_theta: float = np.pi / 2.0,
+) -> np.ndarray:
+    """Return the reduced bath state after exact noiseless evolution.
+
+    The time-independent joint Hamiltonian is propagated spectrally in the
+    central-spin times symmetric-bath space.  This is especially efficient
+    when only one interrogation time is required.
+    """
+    if N < 1:
+        raise ValueError("N must be positive")
+    if time < 0.0:
+        raise ValueError("time must be non-negative")
+
+    dim_bath = N + 1
+    bath_vector = np.asarray(bath_state, dtype=complex).ravel()
+    if bath_vector.shape != (dim_bath,):
+        raise ValueError(
+            f"bath_state must have dimension N + 1 = {dim_bath}, "
+            f"got {bath_vector.shape[0]}"
+        )
+
+    central_vector = central_spin_state(central_theta).full().ravel()
+    initial_state = np.kron(central_vector, bath_vector)
+    hamiltonian = build_hamiltonian(
+        Omega_0=Omega_0,
+        omega=omega,
+        J=J,
+        N=N,
+    ).full()
+    eigenvalues, eigenvectors = np.linalg.eigh(hamiltonian)
+    eigenbasis_amplitudes = eigenvectors.conj().T @ initial_state
+    evolved_state = eigenvectors @ (
+        np.exp(-1j * eigenvalues * time) * eigenbasis_amplitudes
+    )
+
+    amplitudes = evolved_state.reshape(2, dim_bath)
+    return amplitudes.T @ amplitudes.conj()
+
+
 def get_bath_density_matrices(
     Omega_0: float,
     J: float,
@@ -165,6 +227,7 @@ def get_bath_density_matrices(
     beta: float = 1.0,
     bath_state: np.ndarray | None = None,
     omega: float = 0.0,
+    central_theta: float = np.pi / 2.0,
 ) -> list[np.ndarray]:
     """Evolve and return ``rho_B(t) = Tr_central[rho(t)]``.
 
@@ -174,8 +237,10 @@ def get_bath_density_matrices(
     couples those blocks, so the evolution is performed in the full
     central-spin times symmetric-bath space instead.
 
-    The initial state is ``|+x>_central (x) bath_state``, where ``bath_state``
-    defaults to the ``+x`` spin coherent state used by the legacy analyses.
+    The initial central-spin state is
+    ``cos(central_theta/2)|0> + sin(central_theta/2)|1>``.  Its default is the
+    legacy ``|+x>`` state.  ``bath_state`` defaults to the ``+x`` spin coherent
+    state used by the legacy analyses.
     """
     if N < 0:
         raise ValueError("N must be non-negative")
@@ -214,9 +279,9 @@ def get_bath_density_matrices(
             N=N,
             omega=omega,
         )
-        plus_state_central = (qt.basis(2, 0) + qt.basis(2, 1)).unit()
+        initial_central_state = central_spin_state(central_theta)
         bath_ket = qt.Qobj(chi, dims=[[dim_bath], [1]])
-        initial_state = qt.tensor(plus_state_central, bath_ket)
+        initial_state = qt.tensor(initial_central_state, bath_ket)
 
         collapse_operators = []
         if beta > 0.0:
@@ -247,8 +312,8 @@ def get_bath_density_matrices(
     identity_4 = np.eye(4, dtype=complex)
 
     # Row-major vectorization: vec(A R B) = (A kron B.T) vec(R).
-    plus = np.array([1.0, 1.0], dtype=complex) / np.sqrt(2.0)
-    central_rho_0 = np.outer(plus, plus.conj()).reshape(4)
+    central_state = central_spin_state(central_theta).full().ravel()
+    central_rho_0 = np.outer(central_state, central_state.conj()).reshape(4)
     dissipator = (
         beta * (np.kron(sx, sx.T) - identity_4)
         + gamma * (np.kron(sz, sz.T) - identity_4)
@@ -576,6 +641,7 @@ __all__ = [
     "build_hamiltonian",
     "build_initial_state",
     "build_spin_operators",
+    "central_spin_state",
     "coherent_bath_state",
     "compute_bath_qfi_trajectory",
     "compute_qcrb_matrices",
