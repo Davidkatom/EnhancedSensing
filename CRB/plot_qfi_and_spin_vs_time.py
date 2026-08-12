@@ -35,6 +35,7 @@ try:
         coherent_bath_state,
         observable_moment_fisher,
         qfi_vectorized,
+        save_plot,
     )
 except ModuleNotFoundError:  # Allow: python CRB/plot_qfi_and_spin_vs_time.py
     from crb_core import (
@@ -44,6 +45,7 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_qfi_and_spin_vs_time.py
         coherent_bath_state,
         observable_moment_fisher,
         qfi_vectorized,
+        save_plot,
     )
 
 
@@ -58,7 +60,7 @@ class SimulationConfig:
     dJ: float = 1e-3
 
     t_min: float = 0.0
-    t_max: float = 10
+    t_max: float = 40
     n_steps: int = 401
 
     central_theta_rad: float = np.pi / 2.0
@@ -598,11 +600,8 @@ def parameter_tags(cfg: SimulationConfig) -> str:
 
 
 def output_path(cfg: SimulationConfig) -> Path:
-    """Return the traceable ``graphs/<script-stem>/`` figure path."""
-    repository_root = Path(__file__).resolve().parent.parent
-    directory = repository_root / "graphs" / Path(__file__).stem
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory / (
+    """Return the parameter-rich filename passed to the shared plot saver."""
+    return Path(
         f"driven-vs-ramsey__{parameter_tags(cfg)}.{cfg.figure_format.lower()}"
     )
 
@@ -783,8 +782,21 @@ def plot_trajectories(
     figure.subplots_adjust(top=0.93, bottom=0.07, left=0.07, right=0.98)
 
     path = output_path(cfg)
-    figure.savefig(
+    path = save_plot(
+        figure,
         path,
+        metadata={
+            "config": cfg,
+            "time_values": times,
+            "driven_qfi": qfi,
+            "driven_classical_fisher": classical_fisher,
+            "driven_spin_expectations": spin_expectations,
+            "driven_spin_fits": spin_fits,
+            "ramsey_qfi": ramsey_qfi,
+            "ramsey_classical_fisher": ramsey_classical_fisher,
+            "ramsey_spin_expectations": ramsey_spin_expectations,
+        },
+        script_path=__file__,
         format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",

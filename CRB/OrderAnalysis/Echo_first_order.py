@@ -54,6 +54,7 @@ from CRB.crb_core import (  # noqa: E402
     coherent_bath_state,
     observable_moment_fisher,
     qfi_vectorized,
+    save_plot,
 )
 
 
@@ -388,10 +389,8 @@ def parameter_tags(cfg: EchoFirstOrderConfig) -> str:
 
 
 def output_path(cfg: EchoFirstOrderConfig) -> Path:
-    """Return a parameter-rich path under ``graphs/Echo_first_order``."""
-    directory = REPOSITORY_ROOT / "graphs" / Path(__file__).stem
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory / (
+    """Return the parameter-rich filename passed to the shared plot saver."""
+    return Path(
         f"keep-J-decoder-qfi-to-xyz-linear-moment-fi__{parameter_tags(cfg)}."
         f"{cfg.figure_format.lower()}"
     )
@@ -440,8 +439,11 @@ def plot_echo_first_order(
     figure.tight_layout()
 
     path = output_path(cfg)
-    figure.savefig(
+    path = save_plot(
+        figure,
         path,
+        metadata={"config": cfg, "result": result},
+        script_path=__file__,
         format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",

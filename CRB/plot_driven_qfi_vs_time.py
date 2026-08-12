@@ -21,12 +21,14 @@ try:
         coherent_bath_state,
         compute_bath_qfi_trajectory,
         get_bath_density_matrices,
+        save_plot,
     )
 except ModuleNotFoundError:  # Allow: python CRB/plot_driven_qfi_vs_time.py
     from crb_core import (
         coherent_bath_state,
         compute_bath_qfi_trajectory,
         get_bath_density_matrices,
+        save_plot,
     )
 
 
@@ -101,10 +103,21 @@ def plot_qfi(
     axis.grid(True, linestyle=":", alpha=0.8)
     figure.tight_layout()
 
-    output_path = Path(cfg.output_figure)
-    if not output_path.is_absolute():
-        output_path = Path(__file__).resolve().parent / output_path
-    figure.savefig(output_path, dpi=200, bbox_inches="tight")
+    maximum_index = int(np.argmax(qfi))
+    output_path = save_plot(
+        figure,
+        cfg.output_figure,
+        metadata={
+            "config": cfg,
+            "time_values": tlist,
+            "bath_qfi": qfi,
+            "maximum_qfi": qfi[maximum_index],
+            "maximum_qfi_time": tlist[maximum_index],
+        },
+        script_path=__file__,
+        dpi=200,
+        bbox_inches="tight",
+    )
     # plt.close(figure)
     plt.show()
     return output_path

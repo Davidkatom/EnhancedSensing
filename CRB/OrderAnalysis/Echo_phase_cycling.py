@@ -54,6 +54,7 @@ from CRB.crb_core import (  # noqa: E402
     coherent_bath_state,
     observable_projective_fisher,
     qfi_vectorized,
+    save_plot,
 )
 
 
@@ -313,10 +314,8 @@ def parameter_tags(cfg: EchoPhaseCyclingConfig) -> str:
 
 
 def output_path(cfg: EchoPhaseCyclingConfig) -> Path:
-    """Return ``graphs/<script-stem>/`` at the repository root."""
-    directory = REPOSITORY_ROOT / "graphs" / Path(__file__).stem
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory / (
+    """Return the parameter-rich filename passed to the shared plot saver."""
+    return Path(
         f"post-echo-mqc__{parameter_tags(cfg)}.{cfg.figure_format.lower()}"
     )
 
@@ -423,8 +422,11 @@ def plot_echo_phase_cycling(
     figure.tight_layout()
 
     path = output_path(cfg)
-    figure.savefig(
+    path = save_plot(
+        figure,
         path,
+        metadata={"config": cfg, "result": result},
+        script_path=__file__,
         format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",

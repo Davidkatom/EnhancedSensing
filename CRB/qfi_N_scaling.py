@@ -21,6 +21,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import qutip as qt
 
+try:
+    from CRB.crb_core import save_plot
+except ModuleNotFoundError:  # Allow: python CRB/qfi_N_scaling.py
+    from crb_core import save_plot
+
 # ============================================================
 # Configuration
 # ============================================================
@@ -263,8 +268,21 @@ def plot_results(results, cfg, fname="fq_vs_N_scaling.png"):
     ax3.grid(True, which="both", alpha=0.3)
 
     fig.tight_layout()
-    fig.savefig(fname, dpi=150)
-    print(f"Saved {fname}")
+    path = save_plot(
+        fig,
+        fname,
+        metadata={
+            "config": cfg,
+            "results": results,
+            "fitted_exponents": {
+                ratio: fit_power_law(N, FQ)
+                for ratio, (N, FQ, _) in results.items()
+            },
+        },
+        script_path=__file__,
+        dpi=150,
+    )
+    print(f"Saved {path}")
     plt.show()
 
 

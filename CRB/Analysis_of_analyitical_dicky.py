@@ -20,6 +20,7 @@ try:
         observable_moment_fisher,
         observable_projective_fisher,
         qfi_from_rho_and_drho,
+        save_plot,
     )
 except ModuleNotFoundError:  # Allow: python CRB/Analysis_of_analyitical_dicky.py
     from crb_core import (
@@ -35,6 +36,7 @@ except ModuleNotFoundError:  # Allow: python CRB/Analysis_of_analyitical_dicky.p
         observable_moment_fisher,
         observable_projective_fisher,
         qfi_from_rho_and_drho,
+        save_plot,
     )
 
 
@@ -80,6 +82,7 @@ def plot_qfi_results(
     opt_quadrature_angles: np.ndarray,
     output_figure: str,
     probe_beta_deg: float,
+    cfg: SimulationConfig,
 ) -> None:
     """Plot QCRB minima, optimal times, and optimal quadrature angles."""
     optimal_idx = int(np.argmin(min_qcrb_per_omega))
@@ -275,7 +278,25 @@ def plot_qfi_results(
         y=1.01,
     )
     plt.tight_layout()
-    plt.savefig(output_figure, bbox_inches="tight")
+    save_plot(
+        fig,
+        output_figure,
+        metadata={
+            "config": cfg,
+            "omega_values": omega_list,
+            "time_values": tlist,
+            "normalized_qcrb_minima": min_qcrb_per_omega,
+            "unnormalized_qcrb_minima": min_qcrb_unnormalized_per_omega,
+            "classical_crb_minima": min_ccrb_per_omega,
+            "classical_crb_unnormalized_minima": min_ccrb_unnormalized_per_omega,
+            "optimal_times": optimal_times,
+            "optimal_quadrature_angles": opt_quadrature_angles,
+            "optimal_omega": optimal_omega,
+            "unnormalized_optimal_omega": unnormalized_optimal_omega,
+        },
+        script_path=__file__,
+        bbox_inches="tight",
+    )
     plt.show()
 
 
@@ -426,6 +447,7 @@ def main() -> None:
         opt_quadrature_angles=opt_quadrature_angles,
         output_figure=cfg.output_figure,
         probe_beta_deg=cfg.probe_beta_deg,
+        cfg=cfg,
     )
 
 

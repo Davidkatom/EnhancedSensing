@@ -35,6 +35,7 @@ try:
         fit_power_law,
         optimize_protocol,
     )
+    from CRB.crb_core import save_plot
 except ModuleNotFoundError:  # Allow: python CRB/plot_driven_scaling_exponent_map.py
     from compare_ramsey_driven_vs_N import (
         ComparisonConfig,
@@ -42,6 +43,7 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_driven_scaling_exponent_ma
         fit_power_law,
         optimize_protocol,
     )
+    from crb_core import save_plot
 
 
 @dataclass(frozen=True)
@@ -330,7 +332,19 @@ def plot_exponent_map(
     figure.tight_layout()
 
     figure_path = output_path(cfg.output_figure)
-    figure.savefig(figure_path, dpi=200, bbox_inches="tight")
+    figure_path = save_plot(
+        figure,
+        figure_path,
+        metadata={
+            "config": cfg,
+            "central_drive_values": Omega_values,
+            "bath_drive_values": omega_values,
+            "scaling_exponents": results,
+        },
+        script_path=__file__,
+        dpi=200,
+        bbox_inches="tight",
+    )
     plt.close(figure)
     return figure_path
 

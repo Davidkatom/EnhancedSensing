@@ -29,12 +29,14 @@ try:
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
         qfi_from_rho_and_drho,
+        save_plot,
     )
 except ModuleNotFoundError:  # Allow: python CRB/plot_driven_qfi_map.py
     from crb_core import (
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
         qfi_from_rho_and_drho,
+        save_plot,
     )
 
 
@@ -479,8 +481,16 @@ def plot_qfi_map(
     figure.tight_layout()
 
     figure_path, _ = output_paths(cfg)
-    figure.savefig(
+    figure_path = save_plot(
+        figure,
         figure_path,
+        metadata={
+            "config": cfg,
+            "central_drive_values": Omega_values,
+            "bath_drive_values": omega_values,
+            "bath_qfi": qfi,
+        },
+        script_path=__file__,
         format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",

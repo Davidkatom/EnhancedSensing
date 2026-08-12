@@ -13,11 +13,189 @@ half in either the drive or collective-spin operators.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Sequence
+from collections.abc import Mapping
+from dataclasses import dataclass, fields, is_dataclass
+from datetime import datetime, timezone
+import inspect
+import json
+import math
+import os
+from pathlib import Path
+from typing import Any, Sequence
 
 import numpy as np
 import qutip as qt
+
+
+def _metadata_value(value: Any) -> Any:
+    """Convert plot metadata to compact, JSON-safe values.
+
+    Configuration dataclasses are recorded field-for-field.  Numerical arrays
+    are summarized rather than copied into every image, while small arrays also
+    retain their values so sweep grids and short result vectors remain useful.
+    """
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            field.name: _metadata_value(getattr(value, field.name))
+            for field in fields(value)
+        }
+    if isinstance(value, np.ndarray):
+        summary: dict[str, Any] = {
+            "type": "ndarray",
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "size": int(value.size),
+        }
+        if value.size:
+            if np.issubdtype(value.dtype, np.number):
+                finite = np.isfinite(value)
+                summary["finite_count"] = int(np.count_nonzero(finite))
+                if np.any(finite) and not np.iscomplexobj(value):
+                    summary["min"] = _metadata_value(np.min(value[finite]))
+                    summary["max"] = _metadata_value(np.max(value[finite]))
+            if value.size <= 64:
+                summary["values"] = _metadata_value(value.tolist())
+        return summary
+    if isinstance(value, np.generic):
+        return _metadata_value(value.item())
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(key): _metadata_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        items = list(value)
+        if len(items) <= 64:
+            return [_metadata_value(item) for item in items]
+        return {
+            "type": type(value).__name__,
+            "length": len(items),
+            "first_values": [_metadata_value(item) for item in items[:8]],
+        }
+    if isinstance(value, complex):
+        return {"real": value.real, "imag": value.imag}
+    if isinstance(value, float) and not math.isfinite(value):
+        if math.isnan(value):
+            return "NaN"
+        return "Infinity" if value > 0 else "-Infinity"
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return repr(value)
+
+
+def save_plot(
+    figure: Any,
+    filename: str | Path,
+    *,
+    metadata: Mapping[str, Any] | None = None,
+    script_path: str | Path | None = None,
+    **savefig_kwargs: Any,
+) -> Path:
+    """Save a figure under ``OneDrive/Graphs/<script_name>`` with metadata.
+
+    ``metadata`` should contain the configuration and any plot-specific
+    derived quantities.  The complete JSON payload is embedded directly in
+    PNG, PDF, and SVG outputs, so the plot remains self-contained when copied
+    or shared.  Formats with limited metadata support receive a creator tag.
+
+    Args:
+        figure: A Matplotlib-compatible figure exposing ``savefig``.
+        filename: Desired file name.  Directory components are intentionally
+            ignored because the destination is centrally managed.
+        metadata: Plot configuration, inputs, and derived values to preserve.
+        script_path: Source script used to name the destination folder.  When
+            omitted, the direct caller's file is used.
+        **savefig_kwargs: Keyword arguments forwarded to ``figure.savefig``.
+
+    Returns:
+        The absolute path of the saved figure.
+    """
+    if script_path is None:
+        script_path = inspect.currentframe().f_back.f_code.co_filename
+    source_script = Path(script_path).resolve()
+    script_name = source_script.stem
+
+    onedrive_value = os.environ.get("OneDrive")
+    if not onedrive_value:
+        raise RuntimeError(
+            "The OneDrive environment variable is not set; cannot save the "
+            "plot under OneDrive/Graphs."
+        )
+    onedrive = Path(onedrive_value).expanduser()
+
+    requested_name = Path(filename).name
+    if not requested_name:
+        raise ValueError("filename must include a file name")
+    output_directory = onedrive / "Graphs" / script_name
+    output_directory.mkdir(parents=True, exist_ok=True)
+    output_path = output_directory / requested_name
+
+    explicit_format = savefig_kwargs.get("format")
+    figure_format = str(explicit_format or output_path.suffix.lstrip(".") or "png").lower()
+    if not output_path.suffix:
+        output_path = output_path.with_suffix(f".{figure_format}")
+
+    saved_at = datetime.now(timezone.utc).isoformat()
+    figure_size = None
+    if hasattr(figure, "get_size_inches"):
+        figure_size = [float(item) for item in figure.get_size_inches()]
+    payload = {
+        "schema_version": 1,
+        "saved_at_utc": saved_at,
+        "source_script": str(source_script),
+        "script_name": script_name,
+        "figure": {
+            "filename": output_path.name,
+            "format": figure_format,
+            "dpi": _metadata_value(
+                savefig_kwargs.get("dpi", getattr(figure, "dpi", None))
+            ),
+            "size_inches": figure_size,
+        },
+        "parameters": _metadata_value(metadata or {}),
+    }
+    compact_payload = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+    supplied_file_metadata = dict(savefig_kwargs.pop("metadata", {}) or {})
+    title = supplied_file_metadata.pop("Title", output_path.stem)
+    if figure_format == "png":
+        embedded_metadata = {
+            **supplied_file_metadata,
+            "Title": str(title),
+            "Author": "CRB save_plot",
+            "Description": compact_payload,
+            "Software": "CRB.crb_core.save_plot",
+            "Creation Time": saved_at,
+        }
+        savefig_kwargs["metadata"] = embedded_metadata
+    elif figure_format == "pdf":
+        savefig_kwargs["metadata"] = {
+            **supplied_file_metadata,
+            "Title": str(title),
+            "Author": "CRB save_plot",
+            "Subject": compact_payload,
+            "Creator": "CRB.crb_core.save_plot",
+        }
+    elif figure_format == "svg":
+        savefig_kwargs["metadata"] = {
+            **supplied_file_metadata,
+            "Title": str(title),
+            "Description": compact_payload,
+            "Creator": "CRB.crb_core.save_plot",
+            "Date": saved_at,
+        }
+    elif figure_format in {"ps", "eps"}:
+        savefig_kwargs["metadata"] = {
+            **supplied_file_metadata,
+            "Creator": "CRB.crb_core.save_plot",
+        }
+
+    figure.savefig(output_path, **savefig_kwargs)
+    return output_path
 
 
 @dataclass(frozen=True)
@@ -654,4 +832,5 @@ __all__ = [
     "optimal_sz2_bath_state",
     "qfi_from_rho_and_drho",
     "qfi_vectorized",
+    "save_plot",
 ]

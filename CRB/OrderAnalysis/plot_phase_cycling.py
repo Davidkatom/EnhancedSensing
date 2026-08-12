@@ -45,6 +45,7 @@ try:
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
         qfi_vectorized,
+        save_plot,
     )
 except ModuleNotFoundError:  # Allow: python CRB/plot_phase_cycling.py
     from crb_core import (
@@ -52,6 +53,7 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_phase_cycling.py
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
         qfi_vectorized,
+        save_plot,
     )
 
 
@@ -354,11 +356,8 @@ def parameter_tags(cfg: PhaseCyclingConfig) -> str:
 
 
 def output_path(cfg: PhaseCyclingConfig) -> Path:
-    """Return the traceable ``graphs/<script-stem>/`` figure path."""
-    repository_root = Path(__file__).resolve().parent.parent
-    directory = repository_root / "graphs" / Path(__file__).stem
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory / (
+    """Return the parameter-rich filename passed to the shared plot saver."""
+    return Path(
         f"mqc-spectrum__{parameter_tags(cfg)}.{cfg.figure_format.lower()}"
     )
 
@@ -444,8 +443,11 @@ def plot_phase_cycling(
     figure.tight_layout()
 
     path = output_path(cfg)
-    figure.savefig(
+    path = save_plot(
+        figure,
         path,
+        metadata={"config": cfg, "result": result},
+        script_path=__file__,
         format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",

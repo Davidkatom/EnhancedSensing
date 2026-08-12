@@ -3,6 +3,11 @@ import matplotlib.pyplot as plt
 import qutip as qt
 from dataclasses import dataclass
 
+try:
+    from CRB.crb_core import save_plot
+except ModuleNotFoundError:  # Allow: python CRB/Analysis_of_analyitical_full.py
+    from crb_core import save_plot
+
 
 # ============================================================
 # Configuration
@@ -190,6 +195,7 @@ def plot_results(
     min_qcrb_per_omega: np.ndarray,
     optimal_times: np.ndarray,
     output_figure: str,
+    cfg: SimulationConfig,
 ):
     optimal_idx = np.argmin(min_qcrb_per_omega)
     optimal_omega = omega_list[optimal_idx]
@@ -263,7 +269,21 @@ def plot_results(
     axes[2].legend()
 
     plt.tight_layout()
-    plt.savefig(output_figure, bbox_inches="tight")
+    save_plot(
+        fig,
+        output_figure,
+        metadata={
+            "config": cfg,
+            "omega_values": omega_list,
+            "time_values": tlist,
+            "normalized_qcrb_minima": min_qcrb_per_omega,
+            "optimal_times": optimal_times,
+            "optimal_omega": optimal_omega,
+            "minimum_normalized_qcrb": min_qcrb_per_omega[optimal_idx],
+        },
+        script_path=__file__,
+        bbox_inches="tight",
+    )
     plt.show()
 
 
@@ -335,6 +355,7 @@ def main():
         min_qcrb_per_omega=min_qcrb_per_omega,
         optimal_times=optimal_times,
         output_figure=cfg.output_figure,
+        cfg=cfg,
     )
 
 

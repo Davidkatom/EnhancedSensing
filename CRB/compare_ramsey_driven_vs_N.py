@@ -41,6 +41,7 @@ try:
         compute_bath_qfi_trajectory,
         get_bath_density_matrices,
         qfi_from_rho_and_drho,
+        save_plot,
     )
 except ModuleNotFoundError:  # Allow: python CRB/compare_ramsey_driven_vs_N.py
     from crb_core import (
@@ -51,6 +52,7 @@ except ModuleNotFoundError:  # Allow: python CRB/compare_ramsey_driven_vs_N.py
         compute_bath_qfi_trajectory,
         get_bath_density_matrices,
         qfi_from_rho_and_drho,
+        save_plot,
     )
 
 
@@ -382,10 +384,19 @@ def plot_comparison(
     axis.legend()
     figure.tight_layout()
 
-    output_path = Path(cfg.output_figure)
-    if not output_path.is_absolute():
-        output_path = Path(__file__).resolve().parent / output_path
-    figure.savefig(output_path, dpi=200, bbox_inches="tight")
+    output_path = save_plot(
+        figure,
+        cfg.output_figure,
+        metadata={
+            "config": cfg,
+            "protocols": PROTOCOLS,
+            "results": results,
+            "plot": "time_normalized_qcrb_comparison",
+        },
+        script_path=__file__,
+        dpi=200,
+        bbox_inches="tight",
+    )
     plt.close(figure)
     return output_path
 
@@ -432,10 +443,19 @@ def plot_fq_fractions(
     axis.legend(fontsize="small")
     figure.tight_layout()
 
-    output_path = Path(cfg.output_fraction_figure)
-    if not output_path.is_absolute():
-        output_path = Path(__file__).resolve().parent / output_path
-    figure.savefig(output_path, dpi=200, bbox_inches="tight")
+    output_path = save_plot(
+        figure,
+        cfg.output_fraction_figure,
+        metadata={
+            "config": cfg,
+            "protocols": PROTOCOLS,
+            "results": results,
+            "plot": "subsystem_qfi_fractions",
+        },
+        script_path=__file__,
+        dpi=200,
+        bbox_inches="tight",
+    )
     plt.close(figure)
     return output_path
 

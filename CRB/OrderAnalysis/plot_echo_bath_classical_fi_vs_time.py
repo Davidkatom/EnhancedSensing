@@ -67,6 +67,7 @@ from CRB.crb_core import (  # noqa: E402
     build_bath_operators,
     observable_moment_fisher,
     observable_projective_fisher,
+    save_plot,
 )
 
 
@@ -79,15 +80,15 @@ class EchoBathClassicalFIConfig:
     omega: float = 1.0
     J_nominal: float = 1.0
     J_estimate: float = 1.0
-    dJ: float = 1e-4
+    dJ: float = 1e-5
 
-    preparation_time: float = 4.0
-    n_preparation_times: int = 301
-    sensing_time: float = 1.0
-    n_sense_times: int = 301
-    decode_time: float = 1.0
-    n_decode_times: int = 301
-    num_of_cycles: int = 4
+    preparation_time: float = 0
+    n_preparation_times: int = 300
+    sensing_time: float = 24.2
+    n_sense_times: int = 300
+    decode_time: float = 1.55
+    n_decode_times: int = 300
+    num_of_cycles: int = 2
 
     central_theta_rad: float = np.pi / 2.0
     central_phi_rad: float = 0.0
@@ -439,10 +440,8 @@ def parameter_tags(cfg: EchoBathClassicalFIConfig) -> str:
 
 
 def output_path(cfg: EchoBathClassicalFIConfig) -> Path:
-    """Return a traceable path under the script-specific graph directory."""
-    directory = REPOSITORY_ROOT / "graphs" / Path(__file__).stem
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory / (
+    """Return the parameter-rich filename passed to the shared plot saver."""
+    return Path(
         f"bath-moment-and-Sx-projective-fi-prep-cycles__{parameter_tags(cfg)}."
         f"{cfg.figure_format.lower()}"
     )
@@ -614,8 +613,11 @@ def plot_echo_bath_classical_fi(
     figure.tight_layout()
 
     path = output_path(cfg)
-    figure.savefig(
+    path = save_plot(
+        figure,
         path,
+        metadata={"config": cfg, "result": result},
+        script_path=__file__,
         format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",

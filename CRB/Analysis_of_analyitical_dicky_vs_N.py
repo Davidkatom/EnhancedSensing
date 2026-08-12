@@ -4,6 +4,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import qutip as qt
 
+try:
+    from CRB.crb_core import save_plot
+except ModuleNotFoundError:  # Allow: python CRB/Analysis_of_analyitical_dicky_vs_N.py
+    from crb_core import save_plot
+
 # ============================================================
 # Configuration
 # ============================================================
@@ -231,6 +236,7 @@ def plot_vs_N_results(
     fq_bath_over_global: np.ndarray,
     fq_central_over_global: np.ndarray,
     output_figure: str,
+    cfg: SimulationConfig,
 ):
     # Function to fit power-law y = a * N^b
     def fit_power_law(x, y):
@@ -267,7 +273,7 @@ def plot_vs_N_results(
 
     axes[0].set_xlabel("Number of Bath Qubits ($N$)")
     axes[0].set_ylabel(r"Time-normalized QCRB $\min_{t,\Omega}\sqrt{(t+t_{\mathrm{oh}})/F_Q}$")
-    axes[0].set_title("Time-normalized QCRB vs N (Optimal $\Omega$, $t$)")
+    axes[0].set_title(r"Time-normalized QCRB vs N (Optimal $\Omega$, $t$)")
     axes[0].grid(True, linestyle=":")
     axes[0].legend()
     axes[0].set_xscale("log")
@@ -330,7 +336,7 @@ def plot_vs_N_results(
     twin_ax.set_ylabel(r"Inverse QFI $\min_{t,\Omega} 1/F_Q$", color="tab:red")
     twin_ax.tick_params(axis="y", labelcolor="tab:red")
     
-    axes[1].set_title("Unnormalized QCRB & Inverse QFI vs N (Optimal $\Omega$, $t$)")
+    axes[1].set_title(r"Unnormalized QCRB & Inverse QFI vs N (Optimal $\Omega$, $t$)")
     axes[1].grid(True, linestyle=":")
     
     # Combine legends from axes[1] and twin_ax
@@ -349,7 +355,7 @@ def plot_vs_N_results(
         marker="o",
         linestyle="-",
         color="tab:blue",
-        label="Optimal $\Omega$ (Normalized)",
+        label=r"Optimal $\Omega$ (Normalized)",
     )
     axes[2].plot(
         N_values,
@@ -357,7 +363,7 @@ def plot_vs_N_results(
         marker="s",
         linestyle="--",
         color="tab:orange",
-        label="Optimal $\Omega$ (Unnormalized)",
+        label=r"Optimal $\Omega$ (Unnormalized)",
     )
     axes[2].set_xlabel("Number of Bath Qubits ($N$)")
     axes[2].set_ylabel(r"Optimal Transverse Field $\Omega^*$")
@@ -435,7 +441,25 @@ def plot_vs_N_results(
     fig.delaxes(axes[5])
 
     plt.tight_layout()
-    plt.savefig(output_figure, bbox_inches="tight")
+    save_plot(
+        fig,
+        output_figure,
+        metadata={
+            "config": cfg,
+            "N_values": N_values,
+            "normalized_qcrb_minima": min_qcrb_norm,
+            "unnormalized_qcrb_minima": min_qcrb_unnorm,
+            "optimal_omega_normalized": opt_omega_norm,
+            "optimal_omega_unnormalized": opt_omega_unnorm,
+            "optimal_time_normalized": opt_t_norm,
+            "optimal_time_unnormalized": opt_t_unnorm,
+            "optimal_quadrature_angles": opt_quadrature_angle_norm,
+            "bath_qfi_fraction": fq_bath_over_global,
+            "central_qfi_fraction": fq_central_over_global,
+        },
+        script_path=__file__,
+        bbox_inches="tight",
+    )
     plt.show()
 
 # ============================================================
@@ -584,6 +608,7 @@ def main():
         fq_bath_over_global=np.array(fq_bath_over_global),
         fq_central_over_global=np.array(fq_central_over_global),
         output_figure=cfg.output_figure,
+        cfg=cfg,
     )
 
 if __name__ == "__main__":
