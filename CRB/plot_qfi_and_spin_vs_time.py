@@ -54,8 +54,8 @@ class SimulationConfig:
     """Physics, sampling, fitting, and visualization parameters."""
 
     N: int = 15
-    Omega: float = 2.5
-    omega: float = 1.0
+    Omega: float = 0.0
+    omega: float = 1
     J_nominal: float = 1.0
     dJ: float = 1e-3
 

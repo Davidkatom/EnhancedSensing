@@ -495,7 +495,8 @@ def plot_qfi_map(
         dpi=cfg.figure_dpi,
         bbox_inches="tight",
     )
-    plt.close(figure)
+    plt.show()
+    # plt.close(figure)
     return figure_path
 
 

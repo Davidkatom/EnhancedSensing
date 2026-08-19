@@ -28,6 +28,29 @@ moments ``<S_x>``, ``<S_y>``, and ``<S_z>`` through error propagation,
 
     F_C[<S_i>] = (partial_J <S_i>)^2 / Var(S_i).
 
+The plot also includes the Fisher information from the full projective
+``S_x`` outcome distribution and the sum of the full projective Fisher
+information from three separate ``S_x``, ``S_y``, and ``S_z`` experiments,
+
+    F_C^proj(S_x) + F_C^proj(S_y) + F_C^proj(S_z).
+
+The reduced-bath quantum Fisher information ``F_Q^bath`` is shown as the
+single-copy measurement-independent benchmark.
+
+At each sampled time, the symmetric logarithmic derivative (SLD) is obtained
+from the reduced bath state and its ``J`` derivative.  The plot includes the
+classical Fisher information of the SLD's projective eigenbasis measurement,
+``F_C[SLD]``.
+
+A separate figure shows the fraction of bath QFI captured by the complete
+projective ``S_x`` outcome distribution.  Its score operator is
+
+    L_Sx = sum_m [(partial_J p_m) / p_m] Pi_m^x,
+
+and the plotted identity is
+
+    (L_Sx, L_Sx)_rho / (L, L)_rho = F_C^proj(S_x) / F_Q^bath.
+
 The state is not reset between any stages.  Preparation and sensing use the
 same Hamiltonian and the same true ``J``; their names only distinguish the
 one-time initial interval from the sensing intervals inside the cycle.  The
@@ -67,6 +90,8 @@ from CRB.crb_core import (  # noqa: E402
     build_bath_operators,
     observable_moment_fisher,
     observable_projective_fisher,
+    observable_projective_score,
+    qfi_from_rho_and_drho,
     save_plot,
 )
 
@@ -77,16 +102,16 @@ class EchoBathClassicalFIConfig:
 
     N: int = 15
     Omega: float = 2.5
-    omega: float = 1.0
-    J_nominal: float = 1.0
-    J_estimate: float = 1.0
-    dJ: float = 1e-5
+    omega: float = 1
+    J_nominal: float = 1
+    J_estimate: float = 0.95
+    dJ: float = 1e-4
 
-    preparation_time: float = 0
+    preparation_time: float = 4
     n_preparation_times: int = 300
-    sensing_time: float = 24.2
+    sensing_time: float = 1
     n_sense_times: int = 300
-    decode_time: float = 1.55
+    decode_time: float = 1
     n_decode_times: int = 300
     num_of_cycles: int = 2
 
@@ -95,8 +120,9 @@ class EchoBathClassicalFIConfig:
     bath_theta_rad: float = 0.0
     bath_phi_rad: float = 0.0
 
-    classical_fisher_variance_floor: float = 1e-12
-    projective_fisher_probability_tol: float = 1e-12
+    classical_fisher_variance_floor: float = 1e-2
+    projective_fisher_probability_tol: float = 1e-2
+    qfi_tol: float = 1e-12
 
     figure_width_in: float = 11.0
     figure_height_in: float = 9.0
@@ -109,16 +135,23 @@ class EchoBathClassicalFIConfig:
 
 @dataclass(frozen=True, slots=True)
 class EchoBathClassicalFIResult:
-    """Protocol time, bath FI, ``<S_x>``, and its ``J`` derivative."""
+    """Protocol time, bath QFI/classical FI, and ``S_x`` diagnostics."""
 
     protocol_times: np.ndarray
     preparation_times: np.ndarray
     sense_times: np.ndarray
     decode_elapsed_times: np.ndarray
+    bath_qfi: np.ndarray
+    classical_fi_sld: np.ndarray
     classical_fi_x: np.ndarray
-    classical_fi_x_projective: np.ndarray
     classical_fi_y: np.ndarray
     classical_fi_z: np.ndarray
+    classical_fi_x_projective: np.ndarray
+    classical_fi_y_projective: np.ndarray
+    classical_fi_z_projective: np.ndarray
+    classical_fi_projective_sum: np.ndarray
+    sld_sx_projective_fraction: np.ndarray
+    sx_projective_fi_over_qfi: np.ndarray
     spin_x_expectation: np.ndarray
     spin_x_derivative: np.ndarray
     preparation_end_index: int
@@ -143,6 +176,7 @@ def validate_config(cfg: EchoBathClassicalFIConfig) -> None:
         "bath_phi_rad": cfg.bath_phi_rad,
         "classical_fisher_variance_floor": cfg.classical_fisher_variance_floor,
         "projective_fisher_probability_tol": cfg.projective_fisher_probability_tol,
+        "qfi_tol": cfg.qfi_tol,
         "figure_width_in": cfg.figure_width_in,
         "figure_height_in": cfg.figure_height_in,
     }
@@ -171,6 +205,8 @@ def validate_config(cfg: EchoBathClassicalFIConfig) -> None:
         raise ValueError("classical_fisher_variance_floor must be positive")
     if cfg.projective_fisher_probability_tol <= 0.0:
         raise ValueError("projective_fisher_probability_tol must be positive")
+    if cfg.qfi_tol <= 0.0:
+        raise ValueError("qfi_tol must be positive")
     if cfg.figure_width_in <= 0.0 or cfg.figure_height_in <= 0.0:
         raise ValueError("figure dimensions must be positive")
     if cfg.figure_dpi <= 0:
@@ -189,8 +225,21 @@ def fisher_and_spin_observables(
     minus_state: np.ndarray,
     bath_observables: tuple[np.ndarray, np.ndarray, np.ndarray],
     cfg: EchoBathClassicalFIConfig,
-) -> tuple[float, float, float, float, float, float]:
-    """Return moment FI, projective ``S_x`` FI, ``<S_x>``, and its slope."""
+) -> tuple[
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+    float,
+]:
+    """Return bath QFI, SLD/axis classical FI, and ``<S_x>`` data."""
     rho_bath = reduced_bath_density_matrix(nominal_state, cfg.N)
     rho_plus = reduced_bath_density_matrix(plus_state, cfg.N)
     rho_minus = reduced_bath_density_matrix(minus_state, cfg.N)
@@ -204,21 +253,64 @@ def fisher_and_spin_observables(
         )
         for observable in bath_observables
     )
-    classical_fi_x_projective = observable_projective_fisher(
+    classical_fi_x_projective, spin_x_score = observable_projective_score(
         rho_bath,
         drho_bath,
         bath_observables[0],
         tol=cfg.projective_fisher_probability_tol,
     )
-    spin_x_expectation = float(
-        np.real(np.trace(rho_bath @ bath_observables[0]))
+    other_projective_values = tuple(
+        observable_projective_fisher(
+            rho_bath,
+            drho_bath,
+            observable,
+            tol=cfg.projective_fisher_probability_tol,
+        )
+        for observable in bath_observables[1:]
     )
-    spin_x_derivative = float(
-        np.real(np.trace(drho_bath @ bath_observables[0]))
+    projective_values = (
+        classical_fi_x_projective,
+        *other_projective_values,
     )
+    bath_qfi, sld = qfi_from_rho_and_drho(
+        rho_bath,
+        drho_bath,
+        tol=cfg.qfi_tol,
+    )
+    classical_fi_sld = observable_projective_fisher(
+        rho_bath,
+        drho_bath,
+        sld,
+        tol=cfg.qfi_tol,
+    )
+    spin_x = bath_observables[0]
+    spin_x_expectation = float(np.real(np.trace(rho_bath @ spin_x)))
+    spin_x_derivative = float(np.real(np.trace(drho_bath @ spin_x)))
+    spin_x_score_norm = float(
+        np.real(np.trace(rho_bath @ (spin_x_score @ spin_x_score)))
+    )
+    sld_norm = float(np.real(np.trace(rho_bath @ (sld @ sld))))
+    score_sld_inner_product = 0.5 * np.trace(
+        rho_bath @ (spin_x_score @ sld + sld @ spin_x_score)
+    )
+    if spin_x_score_norm > cfg.qfi_tol and sld_norm > cfg.qfi_tol:
+        sld_sx_projective_fraction = float(
+            np.abs(score_sld_inner_product) ** 2
+            / (spin_x_score_norm * sld_norm)
+        )
+    else:
+        sld_sx_projective_fraction = np.nan
+    if bath_qfi > cfg.qfi_tol:
+        sx_projective_fi_over_qfi = classical_fi_x_projective / bath_qfi
+    else:
+        sx_projective_fi_over_qfi = np.nan
     return (
         *classical_values,
-        classical_fi_x_projective,
+        *projective_values,
+        bath_qfi,
+        classical_fi_sld,
+        sld_sx_projective_fraction,
+        sx_projective_fi_over_qfi,
         spin_x_expectation,
         spin_x_derivative,
     )
@@ -254,10 +346,16 @@ def run_echo_bath_classical_fi(
         bath_operators["Jz"],
     )
     protocol_times: list[float] = []
+    bath_qfi: list[float] = []
+    classical_fi_sld: list[float] = []
     classical_fi_x: list[float] = []
     classical_fi_x_projective: list[float] = []
     classical_fi_y: list[float] = []
     classical_fi_z: list[float] = []
+    classical_fi_y_projective: list[float] = []
+    classical_fi_z_projective: list[float] = []
+    sld_sx_projective_fraction: list[float] = []
+    sx_projective_fi_over_qfi: list[float] = []
     spin_x_expectation: list[float] = []
     spin_x_derivative: list[float] = []
     sensing_end_indices: list[int] = []
@@ -270,6 +368,12 @@ def run_echo_bath_classical_fi(
             fi_y,
             fi_z,
             fi_x_projective,
+            fi_y_projective,
+            fi_z_projective,
+            qfi_bath,
+            fi_sld,
+            sx_projective_fraction,
+            sx_projective_ratio,
             mean_x,
             derivative_x,
         ) = fisher_and_spin_observables(
@@ -284,6 +388,12 @@ def run_echo_bath_classical_fi(
         classical_fi_x_projective.append(fi_x_projective)
         classical_fi_y.append(fi_y)
         classical_fi_z.append(fi_z)
+        classical_fi_y_projective.append(fi_y_projective)
+        classical_fi_z_projective.append(fi_z_projective)
+        bath_qfi.append(qfi_bath)
+        classical_fi_sld.append(fi_sld)
+        sld_sx_projective_fraction.append(sx_projective_fraction)
+        sx_projective_fi_over_qfi.append(sx_projective_ratio)
         spin_x_expectation.append(mean_x)
         spin_x_derivative.append(derivative_x)
 
@@ -348,18 +458,44 @@ def run_echo_bath_classical_fi(
         cycle_end_indices.append(len(protocol_times) - 1)
         cycle_start_states = decoded_states
 
+    classical_fi_x_projective_array = np.asarray(
+        classical_fi_x_projective,
+        dtype=float,
+    )
+    classical_fi_y_projective_array = np.asarray(
+        classical_fi_y_projective,
+        dtype=float,
+    )
+    classical_fi_z_projective_array = np.asarray(
+        classical_fi_z_projective,
+        dtype=float,
+    )
     return EchoBathClassicalFIResult(
         protocol_times=np.asarray(protocol_times, dtype=float),
         preparation_times=preparation_times,
         sense_times=sense_times,
         decode_elapsed_times=decode_elapsed_times,
+        bath_qfi=np.asarray(bath_qfi, dtype=float),
+        classical_fi_sld=np.asarray(classical_fi_sld, dtype=float),
         classical_fi_x=np.asarray(classical_fi_x, dtype=float),
-        classical_fi_x_projective=np.asarray(
-            classical_fi_x_projective,
-            dtype=float,
-        ),
         classical_fi_y=np.asarray(classical_fi_y, dtype=float),
         classical_fi_z=np.asarray(classical_fi_z, dtype=float),
+        classical_fi_x_projective=classical_fi_x_projective_array,
+        classical_fi_y_projective=classical_fi_y_projective_array,
+        classical_fi_z_projective=classical_fi_z_projective_array,
+        classical_fi_projective_sum=(
+            classical_fi_x_projective_array
+            + classical_fi_y_projective_array
+            + classical_fi_z_projective_array
+        ),
+        sld_sx_projective_fraction=np.asarray(
+            sld_sx_projective_fraction,
+            dtype=float,
+        ),
+        sx_projective_fi_over_qfi=np.asarray(
+            sx_projective_fi_over_qfi,
+            dtype=float,
+        ),
         spin_x_expectation=np.asarray(spin_x_expectation, dtype=float),
         spin_x_derivative=np.asarray(spin_x_derivative, dtype=float),
         preparation_end_index=preparation_end_index,
@@ -390,6 +526,7 @@ def parameter_tags(cfg: EchoBathClassicalFIConfig) -> str:
         "bath_phi_rad",
         "classical_fisher_variance_floor",
         "projective_fisher_probability_tol",
+        "qfi_tol",
         "figure_width_in",
         "figure_height_in",
         "figure_dpi",
@@ -427,7 +564,8 @@ def parameter_tags(cfg: EchoBathClassicalFIConfig) -> str:
         ),
         (
             f"num=vf{format_number(cfg.classical_fisher_variance_floor)}-"
-            f"pt{format_number(cfg.projective_fisher_probability_tol)}"
+            f"pt{format_number(cfg.projective_fisher_probability_tol)}-"
+            f"qt{format_number(cfg.qfi_tol)}"
         ),
         (
             f"fig={format_number(cfg.figure_width_in)}x"
@@ -442,7 +580,15 @@ def parameter_tags(cfg: EchoBathClassicalFIConfig) -> str:
 def output_path(cfg: EchoBathClassicalFIConfig) -> Path:
     """Return the parameter-rich filename passed to the shared plot saver."""
     return Path(
-        f"bath-moment-and-Sx-projective-fi-prep-cycles__{parameter_tags(cfg)}."
+        f"bath-qfi-sld-and-spin-projective-fi__{parameter_tags(cfg)}."
+        f"{cfg.figure_format.lower()}"
+    )
+
+
+def sld_sx_projection_output_path(cfg: EchoBathClassicalFIConfig) -> Path:
+    """Return the parameter-rich path for the full-Sx SLD projection plot."""
+    return Path(
+        f"bath-sld-full-sx-projective-fraction__{parameter_tags(cfg)}."
         f"{cfg.figure_format.lower()}"
     )
 
@@ -451,7 +597,7 @@ def plot_echo_bath_classical_fi(
     result: EchoBathClassicalFIResult,
     cfg: EchoBathClassicalFIConfig,
 ) -> Path:
-    """Plot three bath FI curves with nominal ``<S_x>`` underneath."""
+    """Plot bath QFI, SLD/spin classical FI, and ``<S_x>`` diagnostics."""
     figure, (fisher_axis, spin_axis) = plt.subplots(
         2,
         1,
@@ -484,6 +630,27 @@ def plot_echo_bath_classical_fi(
             r"$F_C^{\rm proj}(S_x)$",
             "tab:red",
             "--",
+        ),
+        (
+            result.classical_fi_projective_sum,
+            (
+                r"$F_C^{\rm proj}(S_x)+F_C^{\rm proj}(S_y)"
+                r"+F_C^{\rm proj}(S_z)$"
+            ),
+            "black",
+            "-.",
+        ),
+        (
+            result.classical_fi_sld,
+            r"$F_C[\mathrm{SLD}]$",
+            "tab:cyan",
+            "-",
+        ),
+        (
+            result.bath_qfi,
+            r"$F_Q^{\rm bath}$",
+            "tab:purple",
+            ":",
         ),
     )
     for values, label, color, linestyle in curves:
@@ -558,7 +725,7 @@ def plot_echo_bath_classical_fi(
                     linewidth=1.0,
                 )
 
-    fisher_axis.set_ylabel("Classical Fisher information for $J$")
+    fisher_axis.set_ylabel("Fisher information for $J$")
     if cfg.log_y:
         fisher_axis.set_yscale("log")
     else:
@@ -603,7 +770,7 @@ def plot_echo_bath_classical_fi(
     )
 
     figure.suptitle(
-        "Information accessible from collective-bath linear moments\n"
+        "Reduced-bath quantum and classical Fisher information\n"
         r"Decoder $(-\Omega,+J_0,-\omega)$; "
         rf"$N={cfg.N}$, $J={cfg.J_nominal:g}$, $J_0={cfg.J_estimate:g}$, "
         rf"$t_p={cfg.preparation_time:g}$, $t_s={cfg.sensing_time:g}$, "
@@ -613,6 +780,123 @@ def plot_echo_bath_classical_fi(
     figure.tight_layout()
 
     path = output_path(cfg)
+    path = save_plot(
+        figure,
+        path,
+        metadata={"config": cfg, "result": result},
+        script_path=__file__,
+        format=cfg.figure_format,
+        dpi=cfg.figure_dpi,
+        bbox_inches="tight",
+    )
+    if cfg.show_figure:
+        plt.show()
+    plt.close(figure)
+    return path
+
+
+def plot_sld_sx_projection(
+    result: EchoBathClassicalFIResult,
+    cfg: EchoBathClassicalFIConfig,
+) -> Path:
+    """Plot the full ``S_x`` projective-score/SLD overlap identity."""
+    figure, axis = plt.subplots(
+        figsize=(cfg.figure_width_in, cfg.figure_height_in),
+    )
+    axis.plot(
+        result.protocol_times,
+        result.sld_sx_projective_fraction,
+        color="tab:blue",
+        linewidth=2.2,
+        label=(
+            r"$|(L_{S_x},L_J)_\rho|^2/"
+            r"[(L_{S_x},L_{S_x})_\rho(L_J,L_J)_\rho]$"
+        ),
+    )
+    axis.plot(
+        result.protocol_times,
+        result.sx_projective_fi_over_qfi,
+        color="tab:orange",
+        linewidth=1.8,
+        linestyle="--",
+        label=r"$F_C^{\rm proj}(S_x)/F_Q^{\rm bath}$",
+    )
+
+
+    cycle_duration = cfg.sensing_time + cfg.decode_time
+    protocol_end = cfg.preparation_time + cfg.num_of_cycles * cycle_duration
+    if cfg.preparation_time > 0.0:
+        axis.axvspan(
+            0.0,
+            cfg.preparation_time,
+            color="tab:gray",
+            alpha=0.08,
+        )
+        axis.axvline(
+            cfg.preparation_time,
+            color="black",
+            linestyle="-.",
+            linewidth=1.2,
+        )
+    for cycle_index in range(cfg.num_of_cycles):
+        cycle_start = cfg.preparation_time + cycle_index * cycle_duration
+        sensing_end = cycle_start + cfg.sensing_time
+        cycle_end = cycle_start + cycle_duration
+        axis.axvspan(
+            cycle_start,
+            sensing_end,
+            color="tab:blue",
+            alpha=0.055,
+        )
+        axis.axvspan(
+            sensing_end,
+            cycle_end,
+            color="tab:red",
+            alpha=0.045,
+        )
+        axis.axvline(
+            sensing_end,
+            color="black",
+            linestyle="--",
+            linewidth=1.1,
+        )
+        if cycle_index < cfg.num_of_cycles - 1:
+            axis.axvline(
+                cycle_end,
+                color="black",
+                linestyle=":",
+                linewidth=1.0,
+            )
+
+    finite_values = np.concatenate(
+        (
+            result.sld_sx_projective_fraction[
+                np.isfinite(result.sld_sx_projective_fraction)
+            ],
+            result.sx_projective_fi_over_qfi[
+                np.isfinite(result.sx_projective_fi_over_qfi)
+            ],
+        )
+    )
+    upper_limit = 1.05
+    if finite_values.size:
+        upper_limit = max(upper_limit, 1.05 * float(np.max(finite_values)))
+    axis.set_xlim(0.0, protocol_end)
+    # axis.set_ylim(0.0, upper_limit)
+    axis.set_xlabel(r"Protocol time $\tau$")
+    axis.set_ylabel("Fraction of bath QFI captured")
+    axis.set_title(
+        r"Full projective $S_x$ score alignment with the bath SLD $L_J$"
+        "\n"
+        rf"SLD evaluated at $J={cfg.J_nominal:g}$; "
+        rf"$N={cfg.N}$, $t_p={cfg.preparation_time:g}$, "
+        rf"$t_s={cfg.sensing_time:g}$, $t_d={cfg.decode_time:g}$"
+    )
+    axis.grid(True, linestyle=":", alpha=0.8)
+    axis.legend()
+    figure.tight_layout()
+
+    path = sld_sx_projection_output_path(cfg)
     path = save_plot(
         figure,
         path,
@@ -711,6 +995,7 @@ def parse_config(
         type=float,
         default=defaults.projective_fisher_probability_tol,
     )
+    parser.add_argument("--qfi-tol", type=float, default=defaults.qfi_tol)
     parser.add_argument("--figure-width-in", type=float, default=defaults.figure_width_in)
     parser.add_argument(
         "--figure-height-in",
@@ -737,6 +1022,7 @@ def parse_config(
 def print_summary(
     result: EchoBathClassicalFIResult,
     path: Path,
+    sld_projection_path: Path,
     cfg: EchoBathClassicalFIConfig,
 ) -> None:
     """Print extrema plus final-cycle boundary and endpoint diagnostics."""
@@ -753,11 +1039,51 @@ def print_summary(
         f"0 <= tau <= {protocol_duration:.12g}"
     )
     final_sensing_end_index = int(result.sensing_end_indices[-1])
+    maximum_qfi_index = int(np.argmax(result.bath_qfi))
+    print(
+        f"Maximum F_Q^bath: {result.bath_qfi[maximum_qfi_index]:.12g} "
+        f"at tau={result.protocol_times[maximum_qfi_index]:.12g}"
+    )
+    print(
+        "  at final-cycle sensing boundary: "
+        f"{result.bath_qfi[final_sensing_end_index]:.12g}; "
+        f"at protocol end: {result.bath_qfi[-1]:.12g}"
+    )
+    maximum_sld_fi_index = int(np.argmax(result.classical_fi_sld))
+    print(
+        "Maximum F_C[SLD]: "
+        f"{result.classical_fi_sld[maximum_sld_fi_index]:.12g} "
+        f"at tau={result.protocol_times[maximum_sld_fi_index]:.12g}"
+    )
+    print(
+        "  at final-cycle sensing boundary: "
+        f"{result.classical_fi_sld[final_sensing_end_index]:.12g}; "
+        f"at protocol end: {result.classical_fi_sld[-1]:.12g}"
+    )
+    print(
+        "Maximum |F_Q^bath - F_C[SLD]|: "
+        f"{np.max(np.abs(result.bath_qfi - result.classical_fi_sld)):.12g}"
+    )
+    projection_identity_error = np.abs(
+        result.sld_sx_projective_fraction
+        - result.sx_projective_fi_over_qfi
+    )
+    finite_projection_error = projection_identity_error[
+        np.isfinite(projection_identity_error)
+    ]
+    if finite_projection_error.size:
+        print(
+            "Maximum full-Sx SLD-projection identity error: "
+            f"{np.max(finite_projection_error):.12g}"
+        )
     trajectories = {
         "<Sx>": result.classical_fi_x,
-        "projective Sx": result.classical_fi_x_projective,
         "<Sy>": result.classical_fi_y,
         "<Sz>": result.classical_fi_z,
+        "projective Sx": result.classical_fi_x_projective,
+        "projective Sy": result.classical_fi_y_projective,
+        "projective Sz": result.classical_fi_z_projective,
+        "projective Sx + Sy + Sz": result.classical_fi_projective_sum,
     }
     for measurement, values in trajectories.items():
         maximum_index = int(np.argmax(values))
@@ -784,15 +1110,20 @@ def print_summary(
         f"at tau={result.protocol_times[maximum_slope_index]:.12g}"
     )
     print(f"Saved bath classical-FI timeline to {path}")
+    print(
+        "Saved bath SLD/full-Sx projection timeline to "
+        f"{sld_projection_path}"
+    )
 
 
 def main(argv: list[str] | None = None) -> Path:
-    """Run the piecewise trajectory, save the plot, and return its path."""
+    """Run the trajectory, save both figures, and return the main path."""
     cfg = parse_config(argv)
     validate_config(cfg)
     result = run_echo_bath_classical_fi(cfg)
     path = plot_echo_bath_classical_fi(result, cfg)
-    print_summary(result, path, cfg)
+    sld_projection_path = plot_sld_sx_projection(result, cfg)
+    print_summary(result, path, sld_projection_path, cfg)
     return path
 
 
