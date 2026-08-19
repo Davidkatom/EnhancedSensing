@@ -45,7 +45,7 @@ class SweepConfig:
     """Physics, numerical, checkpoint, and visualization parameters."""
 
     N: int = 15
-    interrogation_time: float = 1.0
+    interrogation_time: float = 0.5
     J_nominal: float = 1.0
     dJ: float = 1e-3
 

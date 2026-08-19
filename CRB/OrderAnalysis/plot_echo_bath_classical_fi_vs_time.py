@@ -104,16 +104,16 @@ class EchoBathClassicalFIConfig:
     Omega: float = 2.5
     omega: float = 1
     J_nominal: float = 1
-    J_estimate: float = 0.95
+    J_estimate: float = 1.0
     dJ: float = 1e-4
 
-    preparation_time: float = 4
+    preparation_time: float = 3
     n_preparation_times: int = 300
-    sensing_time: float = 1
+    sensing_time: float = 0.01
     n_sense_times: int = 300
-    decode_time: float = 1
+    decode_time: float = 0.01
     n_decode_times: int = 300
-    num_of_cycles: int = 2
+    num_of_cycles: int = 1
 
     central_theta_rad: float = np.pi / 2.0
     central_phi_rad: float = 0.0

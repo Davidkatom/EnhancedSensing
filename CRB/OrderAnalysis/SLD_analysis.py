@@ -66,18 +66,19 @@ class SLDAnalysisConfig:
     """Physical, protocol, decomposition, sensitivity, and plot controls."""
 
     N: int = 15
-    Omega: float = 2.5
-    omega: float = 1.0
+    Omega: float = 4.2
+    omega: float = 2.0
     J_nominal: float = 1.0
     J_estimate: float = 1.0
     dJ: float = 1e-4
 
+
     preparation_time: float = 0
     n_preparation_times: int = 300
-    sensing_time: float = 10
+    sensing_time: float = 0.5
     n_sense_times: int = 300
-    decode_time: float = 10
-    n_decode_times: int = 300
+    decode_time: float = 0.001
+    n_decode_times: int = 2
     num_of_cycles: int = 1
 
     central_theta_rad: float = np.pi / 2.0

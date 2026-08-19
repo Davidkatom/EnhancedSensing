@@ -54,13 +54,15 @@ class SimulationConfig:
     """Physics, sampling, fitting, and visualization parameters."""
 
     N: int = 15
-    Omega: float = 0.0
-    omega: float = 1
+    Omega: float = 4.2
+    omega: float = 2.0
     J_nominal: float = 1.0
     dJ: float = 1e-3
 
+
+
     t_min: float = 0.0
-    t_max: float = 40
+    t_max: float = 3
     n_steps: int = 401
 
     central_theta_rad: float = np.pi / 2.0
