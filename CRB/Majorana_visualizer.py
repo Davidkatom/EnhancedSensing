@@ -171,9 +171,9 @@ class SimulationConfig:
     """Every physics, sampling, and rendering knob for the visualizer."""
 
     # --- Hamiltonian: H = Omega*sigma_x + J*sigma_z*S_z + omega*S_x ---
-    N: int = 15
-    Omega: float = 4.2  # central-spin drive, coefficient of X = sigma_x
-    omega: float = 2.0  # collective-bath drive, coefficient of S_x
+    N: int = 1
+    Omega: float = 0.1 # central-spin drive, coefficient of X = sigma_x
+    omega: float = 1  # collective-bath drive, coefficient of S_x
     J: float = 1.0 # central-bath coupling, coefficient of Z * S_z
 
     # --- Optional Markovian dissipation on the central spin ---
@@ -185,9 +185,9 @@ class SimulationConfig:
 
     # --- Initial product state |psi0> = R(theta_c, phi_c) (x) coherent_bath ---
     # Defaults reproduce |0>_central (x) |+>^N_bath.
-    central_theta_rad: float = 0.0  # 0 -> |0>
+    central_theta_rad: float =  np.pi/2 # 0 -> |0>
     central_phi_rad: float = 0.0
-    bath_theta_rad: float = np.pi / 2.0  # pi/2, phi 0 -> |+>^N (the +x state)
+    bath_theta_rad: float =0  # pi/2, phi 0 -> |+>^N (the +x state)
     bath_phi_rad: float = 0.0
 
     # --- Interrogation-time grid (one animation frame per sample) ---
@@ -205,7 +205,7 @@ class SimulationConfig:
     # flips the single-spin and bath drives, keeps the interaction sign, and
     # swaps the estimate J0 for the true J:
     #     H_dec(J0) = -Omega*sigma_x + J0*sigma_z*S_z - omega*S_x.
-    # Both sense_time and decode_time at 0 append nothing and reproduce the
+    # Both sense_time and decode_time anp.pi/2t 0 append nothing and reproduce the
     # default single-Hamiltonian animation.
     sense_time: float = 0.0
     n_sense_steps: int = 100  # frames per sensing segment (used when sense_time>0)

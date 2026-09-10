@@ -53,9 +53,9 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_qfi_and_spin_vs_time.py
 class SimulationConfig:
     """Physics, sampling, fitting, and visualization parameters."""
 
-    N: int = 15
-    Omega: float = 4.2
-    omega: float = 2.0
+    N: int = 1
+    Omega: float = 1
+    omega: float = 1
     J_nominal: float = 1.0
     dJ: float = 1e-3
 
@@ -67,7 +67,7 @@ class SimulationConfig:
 
     central_theta_rad: float = np.pi / 2.0
     central_phi_rad: float = 0.0
-    bath_theta_rad: float = 0.0
+    bath_theta_rad: float = np.pi/2
     bath_phi_rad: float = 0.0
 
     ramsey_Omega: float = 0.0

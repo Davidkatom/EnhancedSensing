@@ -1,0 +1,17 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Generated plot output
+graphs/
+plots/
+*.plot.json
+
+# Stray figure / data output written next to the scripts
+qcrb_initial_angle_sweep.png
+qfi_captured_fraction_*.png
+qfi_captured_fraction_data.csv

@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Majorana Constellation Viewer</title>
+<style>
+  :root {
+    --bg: #0e1117;
+    --bg2: #141a23;
+    --panel: rgba(20, 26, 35, 0.82);
+    --border: #2a3442;
+    --text: #d8e0ea;
+    --muted: #8c99a9;
+    --accent: #5aa9e6;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: radial-gradient(1200px 800px at 50% 0%, #182029 0%, var(--bg) 70%);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  #view { position: fixed; inset: 0; display: block; }
+
+  /* --- Top banner --- */
+  #banner {
+    position: fixed; top: 0; left: 0; right: 0; padding: 10px 16px 12px;
+    text-align: center; pointer-events: none;
+    background: linear-gradient(180deg, rgba(14,17,23,0.85), rgba(14,17,23,0));
+  }
+  #banner .title { font-size: 15px; font-weight: 600; letter-spacing: .2px; }
+  #banner .params { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+
+  /* --- Readout (top-left) --- */
+  #readout {
+    position: fixed; top: 60px; left: 14px; padding: 10px 12px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    font-size: 12.5px; line-height: 1.55; min-width: 168px; backdrop-filter: blur(4px);
+  }
+  #readout .row { display: flex; justify-content: space-between; gap: 14px; }
+  #readout .k { color: var(--muted); }
+  #readout .v { font-variant-numeric: tabular-nums; }
+  #readout b { color: #fff; }
+
+  /* --- Legend (top-right) --- */
+  #legend {
+    position: fixed; top: 60px; right: 14px; padding: 10px 12px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    font-size: 12px; line-height: 1.6; backdrop-filter: blur(4px);
+  }
+  #legend .item { display: flex; align-items: center; gap: 8px; }
+  #legend .swatch { width: 14px; height: 14px; border-radius: 3px; flex: none; border: 1px solid rgba(255,255,255,.25); }
+  /* SLD swatch reads as a hollow diamond, matching the on-sphere markers. */
+  #legend .swatch-diamond { width: 12px; height: 12px; border-radius: 2px; background: transparent !important; border-width: 2px; transform: rotate(45deg); }
+
+  /* --- Transport bar (bottom) --- */
+  #transport {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 12px; padding: 10px 14px; max-width: 94vw;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    backdrop-filter: blur(4px); box-shadow: 0 8px 30px rgba(0,0,0,.35);
+  }
+  button.icon {
+    width: 38px; height: 38px; flex: none; border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--border); background: #1b2430; color: var(--text);
+    font-size: 15px; display: grid; place-items: center;
+  }
+  button.icon:hover { background: #232f3d; border-color: #3a4757; }
+  #scrub { width: min(46vw, 560px); accent-color: var(--accent); cursor: pointer; }
+  #tlabel { font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--muted); min-width: 128px; text-align: center; }
+  .speed { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .speed input { width: 92px; accent-color: var(--accent); }
+  .chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }
+  .hint { position: fixed; left: 14px; bottom: 16px; font-size: 11.5px; color: var(--muted); }
+  .hidden { display: none !important; }
+
+  /* --- Drop overlay (before data is loaded) --- */
+  #drop {
+    position: fixed; inset: 0; display: grid; place-items: center; text-align: center;
+    background: rgba(10,13,18,0.72); z-index: 20;
+  }
+  #drop .card {
+    padding: 40px 46px; border: 2px dashed #3a4757; border-radius: 18px;
+    background: var(--bg2); max-width: 560px; transition: border-color .15s, background .15s;
+  }
+  #drop.dragging .card { border-color: var(--accent); background: #17202b; }
+  #drop h1 { margin: 0 0 6px; font-size: 22px; }
+  #drop p { margin: 8px 0; color: var(--muted); font-size: 13.5px; line-height: 1.6; }
+  #drop code { background: #0c1015; padding: 2px 7px; border-radius: 5px; color: #cfe3ff; font-size: 12.5px; }
+  #pick {
+    margin-top: 14px; padding: 10px 18px; border-radius: 9px; cursor: pointer;
+    border: 1px solid var(--accent); background: #16324a; color: #eaf3ff; font-size: 14px;
+  }
+  #pick:hover { background: #1b3f5e; }
+  #err { color: #ff8080; font-size: 12.5px; min-height: 16px; margin-top: 6px; }
+  .star-emoji { font-size: 34px; }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div id="banner" class="hidden">
+  <div class="title" id="b-title">Majorana constellation</div>
+  <div class="params" id="b-params"></div>
+</div>
+
+<div id="readout" class="hidden">
+  <div class="row"><span class="k">time&nbsp;t</span><span class="v" id="r-t">—</span></div>
+  <div class="row"><span class="k">frame</span><span class="v" id="r-frame">—</span></div>
+  <div class="row"><span class="k">Tr(ρ<sub>c</sub>²)</span><span class="v" id="r-cp">—</span></div>
+  <div class="row"><span class="k">Tr(ρ<sub>b</sub>²)</span><span class="v" id="r-bp">—</span></div>
+  <div class="row"><span class="k">p₀ (weight)</span><span class="v" id="r-p0">—</span></div>
+  <div class="row" id="r-qfi-row"><span class="k">F<sub>Q</sub>(J)</span><span class="v" id="r-qfi">—</span></div>
+</div>
+
+<div id="legend" class="hidden">
+  <div class="item"><span class="swatch" id="lg-gold"></span>dominant eigenstate</div>
+  <div class="item"><span class="swatch" id="lg-blue"></span>sub-dominant</div>
+  <div class="item" id="lg-arrow-row"><span class="swatch" id="lg-arrow"></span>∂<sub>J</sub> star motion (encoding)</div>
+  <div class="item" id="lg-sld-row"><span class="swatch swatch-diamond" id="lg-sld"></span>SLD eigenvectors (optimal meas.)</div>
+  <div class="item"><span class="swatch" id="lg-green" style="background:#2ca02c"></span>central Bloch vector</div>
+  <div class="item"><span class="swatch" id="lg-red"></span>Bloch-tip trail</div>
+</div>
+
+<div id="transport" class="hidden">
+  <button class="icon" id="btn-play" title="Play / Pause (space)">▶</button>
+  <input type="range" id="scrub" min="0" max="1" value="0" step="1" />
+  <span id="tlabel">t = 0.000</span>
+  <label class="speed" title="Playback speed">⏩<input type="range" id="speed" min="0.1" max="3" step="0.1" value="1" /><span id="speedval">1.0×</span></label>
+  <label class="chk"><input type="checkbox" id="showCentral" checked /> central spin</label>
+  <label class="chk" id="lab-arrows"><input type="checkbox" id="showArrows" checked /> ∂<sub>J</sub> arrows</label>
+  <label class="chk" id="lab-sld"><input type="checkbox" id="showSLD" checked /> SLD</label>
+  <button class="icon" id="btn-reset" title="Reset view (r)" style="font-size:13px;">⟳</button>
+  <button class="icon" id="btn-load" title="Load another file" style="font-size:15px;">📂</button>
+</div>
+
+<div class="hint" id="hint">drag to orbit · scroll to zoom · space to play</div>
+
+<div id="drop">
+  <div class="card">
+    <div class="star-emoji">✨</div>
+    <h1>Majorana Constellation Viewer</h1>
+    <p>Drag &amp; drop a star-trajectory <code>.json</code> file anywhere on this page.</p>
+    <p>Generate one with:<br><code>python Majorana_visualizer.py</code><br>
+       (it writes <code>CRB/graphs/majorana_stars__*.json</code>)</p>
+    <button id="pick">Choose a file…</button>
+    <div id="err"></div>
+    <p style="font-size:12px;margin-top:16px;opacity:.8">Orbit with the mouse, scroll to zoom, scrub or play through interrogation time.</p>
+  </div>
+</div>
+
+<input type="file" id="file" accept=".json,application/json" class="hidden" />
+
+<script>
+"use strict";
+(function () {
+  // -----------------------------------------------------------------------
+  // Elements
+  // -----------------------------------------------------------------------
+  const canvas = document.getElementById("view");
+  const ctx = canvas.getContext("2d");
+  const dropEl = document.getElementById("drop");
+  const errEl = document.getElementById("err");
+  const fileInput = document.getElementById("file");
+
+  const banner = document.getElementById("banner");
+  const readout = document.getElementById("readout");
+  const legend = document.getElementById("legend");
+  const transport = document.getElementById("transport");
+  const hint = document.getElementById("hint");
+
+  const scrub = document.getElementById("scrub");
+  const tlabel = document.getElementById("tlabel");
+  const btnPlay = document.getElementById("btn-play");
+  const speedSlider = document.getElementById("speed");
+  const speedVal = document.getElementById("speedval");
+  const showCentralChk = document.getElementById("showCentral");
+  const showArrowsChk = document.getElementById("showArrows");
+  const showSLDChk = document.getElementById("showSLD");
+
+  // -----------------------------------------------------------------------
+  // View / playback state
+  // -----------------------------------------------------------------------
+  const DEFAULT_VIEW = { az: -1.05, el: 0.52, zoom: 1.0 }; // ~ matplotlib elev 30, azim -60
+  const view = { ...DEFAULT_VIEW };
+  const state = {
+    data: null,
+    frame: 0,
+    frameFloat: 0,
+    playing: false,
+    speed: 1.0,
+    showCentral: true,
+    dragging: false,
+    lastX: 0, lastY: 0,
+    // Per-dataset appearance pulled from the exported config (with fallbacks).
+    goldColor: "#f5c518",
+    blueColor: "#2f8fd6",
+    trailColor: "#d62728",
+    blochColor: "#2ca02c",
+    weightThreshold: 0.005,
+    showTrajectory: true,
+    // dJ star-motion arrows (how J is encoded) + SLD eigenvector constellations
+    // (the optimal J measurement); populated from the star-data file when present.
+    hasDJ: false,
+    showArrows: true,
+    showSLD: true,
+    arrowColor: "#39e0c8",
+    arrowScale: 1.0,
+    arrowNComp: 1,
+    sldColor: "#e05fd6",
+    sldThreshold: 0.01,
+  };
+  const ARROW_WORLD_CAP = 0.6; // clamp a scaled dstar/dJ arrow to this length
+  const PLAYBACK_FPS = 24; // data-frames advanced per real second at 1x
+
+  // Precomputed unit-sphere wireframe (independent of canvas size).
+  const GRID = buildSphereGrid();
+
+  // -----------------------------------------------------------------------
+  // High-DPI canvas sizing
+  // -----------------------------------------------------------------------
+  function resize() {
+    const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+    canvas.width = Math.floor(window.innerWidth * dpr);
+    canvas.height = Math.floor(window.innerHeight * dpr);
+    canvas.style.width = window.innerWidth + "px";
+    canvas.style.height = window.innerHeight + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  // -----------------------------------------------------------------------
+  // 3D helpers
+  // -----------------------------------------------------------------------
+  function cameraBasis(az, el) {
+    const ce = Math.cos(el), se = Math.sin(el);
+    const ca = Math.cos(az), sa = Math.sin(az);
+    const dir = [ce * ca, ce * sa, se];       // origin -> viewer
+    const right = [-sa, ca, 0];               // screen +x
+    const up = [-se * ca, -se * sa, ce];      // screen +y (world up when el=0)
+    return { dir, right, up };
+  }
+  function project(p, basis, cx, cy, R) {
+    const sx = p[0] * basis.right[0] + p[1] * basis.right[1] + p[2] * basis.right[2];
+    const sy = p[0] * basis.up[0] + p[1] * basis.up[1] + p[2] * basis.up[2];
+    const depth = p[0] * basis.dir[0] + p[1] * basis.dir[1] + p[2] * basis.dir[2];
+    return { x: cx + R * sx, y: cy - R * sy, depth };
+  }
+
+  function buildSphereGrid() {
+    const lines = [];
+    const D2R = Math.PI / 180;
+    // Latitude circles.
+    for (let latDeg = 30; latDeg <= 150; latDeg += 30) {
+      const th = latDeg * D2R, st = Math.sin(th), ct = Math.cos(th);
+      const pts = [];
+      for (let a = 0; a <= 360; a += 7.5) {
+        const ph = a * D2R;
+        pts.push([st * Math.cos(ph), st * Math.sin(ph), ct]);
+      }
+      lines.push({ pts, emphasis: latDeg === 90 });
+    }
+    // Longitude meridians (each a full great circle in a vertical plane).
+    for (let lonDeg = 0; lonDeg < 180; lonDeg += 30) {
+      const ph = lonDeg * D2R, cp = Math.cos(ph), sp = Math.sin(ph);
+      const pts = [];
+      for (let a = 0; a <= 360; a += 7.5) {
+        const th = a * D2R;
+        pts.push([Math.sin(th) * cp, Math.sin(th) * sp, Math.cos(th)]);
+      }
+      lines.push({ pts, emphasis: false });
+    }
+    const axes = [
+      { v: [1, 0, 0], label: "x" },
+      { v: [0, 1, 0], label: "y" },
+      { v: [0, 0, 1], label: "z" },
+    ];
+    return { lines, axes };
+  }
+
+  // -----------------------------------------------------------------------
+  // Drawing primitives
+  // -----------------------------------------------------------------------
+  function drawGridLine(line, basis, cx, cy, R) {
+    const pts = line.pts;
+    for (let i = 1; i < pts.length; i++) {
+      const a = project(pts[i - 1], basis, cx, cy, R);
+      const b = project(pts[i], basis, cx, cy, R);
+      const front = 0.5 * (a.depth + b.depth) > 0;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+      ctx.strokeStyle = line.emphasis ? "#9fb3c8" : "#6b7c90";
+      ctx.globalAlpha = front ? (line.emphasis ? 0.55 : 0.34) : (line.emphasis ? 0.16 : 0.09);
+      ctx.lineWidth = line.emphasis ? 1.1 : 0.8;
+      ctx.stroke();
+    }
+  }
+
+  function drawBall(cx, cy, R) {
+    // Soft shaded disk to give the wireframe volume; kept translucent so the
+    // stars on the far hemisphere still read through it.
+    const g = ctx.createRadialGradient(cx - R * 0.35, cy - R * 0.4, R * 0.1, cx, cy, R);
+    g.addColorStop(0, "rgba(120,150,180,0.22)");
+    g.addColorStop(0.7, "rgba(60,80,105,0.14)");
+    g.addColorStop(1, "rgba(20,30,45,0.05)");
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function drawAxes(basis, cx, cy, R, front) {
+    for (const ax of GRID.axes) {
+      const p = project([ax.v[0], ax.v[1], ax.v[2]], basis, cx, cy, R);
+      const isFront = p.depth > 0;
+      if (isFront !== front) continue;
+      const m = project([-ax.v[0], -ax.v[1], -ax.v[2]], basis, cx, cy, R);
+      ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.lineTo(p.x, p.y);
+      ctx.strokeStyle = "#8894a3"; ctx.lineWidth = 0.9;
+      ctx.globalAlpha = front ? 0.6 : 0.18; ctx.stroke();
+      if (front) {
+        const lbl = project([ax.v[0] * 1.16, ax.v[1] * 1.16, ax.v[2] * 1.16], basis, cx, cy, R);
+        ctx.globalAlpha = 0.85; ctx.fillStyle = "#aab6c4";
+        ctx.font = "12px system-ui, sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(ax.label, lbl.x, lbl.y);
+      }
+    }
+  }
+
+  function starPath(cx, cy, r) {
+    const inner = r * 0.42;
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const rad = (i % 2 === 0) ? r : inner;
+      const ang = -Math.PI / 2 + i * Math.PI / 5;
+      const x = cx + rad * Math.cos(ang), y = cy + rad * Math.sin(ang);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  }
+
+  function drawStar(cx, cy, r, color, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = color; ctx.shadowBlur = r * 0.9;
+    ctx.fillStyle = color;
+    starPath(cx, cy, r); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = Math.min(1, alpha + 0.2);
+    ctx.lineWidth = 0.8; ctx.strokeStyle = "rgba(0,0,0,0.55)";
+    starPath(cx, cy, r); ctx.stroke();
+    ctx.restore();
+  }
+
+  // SLD-eigenvector markers: a hollow diamond, so the optimal-measurement
+  // constellation reads apart from the filled bath-eigenstate stars.
+  function diamondPath(cx, cy, r) {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy);
+    ctx.lineTo(cx, cy + r); ctx.lineTo(cx - r, cy);
+    ctx.closePath();
+  }
+  function drawDiamond(cx, cy, r, color, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.35;
+    ctx.fillStyle = color; diamondPath(cx, cy, r); ctx.fill();
+    ctx.globalAlpha = Math.min(1, alpha + 0.15);
+    ctx.shadowColor = color; ctx.shadowBlur = r * 0.8;
+    ctx.lineWidth = 1.8; ctx.strokeStyle = color;
+    diamondPath(cx, cy, r); ctx.stroke();
+    ctx.restore();
+  }
+
+  // A d(star)/dJ arrow from screen point `a` to `b`, with a filled arrowhead.
+  function drawArrow(a, b, color, alpha, R) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.5) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color; ctx.fillStyle = color;
+    ctx.lineWidth = 1.8; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    const ang = Math.atan2(dy, dx);
+    const ah = Math.min(len * 0.55, Math.max(5, R * 0.038));
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(b.x - ah * Math.cos(ang - 0.5), b.y - ah * Math.sin(ang - 0.5));
+    ctx.lineTo(b.x - ah * Math.cos(ang + 0.5), b.y - ah * Math.sin(ang + 0.5));
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // -----------------------------------------------------------------------
+  // Sphere renderers
+  // -----------------------------------------------------------------------
+  function drawConstellation(cx, cy, R, basis) {
+    const d = state.data, f = state.frame;
+    const frameStars = d.stars[f];       // [component][star][xyz]
+    const frameW = d.weights[f];         // [component]
+    const vels = (state.hasDJ && state.showArrows && d.star_velocities)
+      ? d.star_velocities[f] : null;                 // [component][star][xyz]
+    const sldStars = (state.hasDJ && state.showSLD && d.sld_stars)
+      ? d.sld_stars[f] : null;                        // [component][star][xyz]
+    const sldShares = (sldStars && d.sld_contributions)
+      ? d.sld_contributions[f] : null;                // [component]
+
+    // Collect stars/diamonds with screen positions + depth so we can occlude by
+    // the ball: far markers behind it, near markers in front.  Bath stars may
+    // carry a projected d(star)/dJ arrow endpoint.
+    const items = [];
+    for (let c = 0; c < frameStars.length; c++) {
+      const w = frameW[c];
+      if (w < state.weightThreshold) continue;
+      const color = c === 0 ? state.goldColor : state.blueColor;
+      const wAlpha = 0.25 + 0.70 * clamp(w, 0, 1);
+      const baseR = R * 0.055 * (0.45 + 0.55 * Math.min(w, 1));
+      const arrowsHere = vels && c < state.arrowNComp;
+      for (let si = 0; si < frameStars[c].length; si++) {
+        const s = frameStars[c][si];
+        const p = project(s, basis, cx, cy, R);
+        let arrowEnd = null;
+        if (arrowsHere) {
+          const v = vels[c][si];
+          let vx = v[0] * state.arrowScale, vy = v[1] * state.arrowScale, vz = v[2] * state.arrowScale;
+          let vlen = Math.hypot(vx, vy, vz);
+          if (vlen > 1e-4) {
+            if (vlen > ARROW_WORLD_CAP) { const sc = ARROW_WORLD_CAP / vlen; vx *= sc; vy *= sc; vz *= sc; }
+            arrowEnd = project([s[0] + vx, s[1] + vy, s[2] + vz], basis, cx, cy, R);
+          }
+        }
+        items.push({ kind: "star", p, color, baseR, wAlpha, front: p.depth > 0, arrowEnd });
+      }
+    }
+    if (sldStars) {
+      for (let c = 0; c < sldStars.length; c++) {
+        const share = sldShares ? sldShares[c] : 1;
+        if (share < state.sldThreshold) continue;
+        const wAlpha = 0.30 + 0.65 * clamp(share, 0, 1);
+        const baseR = R * 0.046 * (0.55 + 0.45 * Math.min(share, 1));
+        for (const s of sldStars[c]) {
+          const p = project(s, basis, cx, cy, R);
+          items.push({ kind: "sld", p, color: state.sldColor, baseR, wAlpha, front: p.depth > 0 });
+        }
+      }
+    }
+    items.sort((a, b) => a.p.depth - b.p.depth); // far -> near
+
+    // Layer for depth: wireframe + far axes, then far markers, the translucent
+    // ball, near axes, and finally the near markers on top.
+    for (const l of GRID.lines) drawGridLine(l, basis, cx, cy, R);
+    drawAxes(basis, cx, cy, R, false);
+    drawMarkers(items, false, R);
+    drawBall(cx, cy, R);
+    drawAxes(basis, cx, cy, R, true);
+    drawMarkers(items, true, R);
+    ctx.globalAlpha = 1;
+    label(cx, cy + R + 26, "collective bath — Majorana stars");
+  }
+
+  function drawMarkers(items, front, R) {
+    for (const it of items) {
+      if (it.front !== front) continue;
+      const dc = front ? (0.55 + 0.45 * (it.p.depth + 1) / 2)
+                       : (0.45 + 0.55 * (it.p.depth + 1) / 2);
+      if (it.kind === "star") {
+        const r = it.baseR * (front ? (0.85 + 0.25 * dc) : (0.8 + 0.2 * dc));
+        const a = front ? Math.min(1, it.wAlpha * (0.7 + 0.5 * dc)) : it.wAlpha * dc * 0.9;
+        drawStar(it.p.x, it.p.y, r, it.color, a);
+        if (it.arrowEnd) drawArrow(it.p, it.arrowEnd, state.arrowColor, front ? 0.95 : 0.4, R);
+      } else {
+        const r = it.baseR * (front ? (0.9 + 0.2 * dc) : (0.85 + 0.15 * dc));
+        const a = front ? Math.min(1, it.wAlpha * (0.7 + 0.5 * dc)) : it.wAlpha * dc * 0.85;
+        drawDiamond(it.p.x, it.p.y, r, it.color, a);
+      }
+    }
+  }
+
+  function drawBloch(cx, cy, R, basis) {
+    const d = state.data, f = state.frame;
+    for (const l of GRID.lines) drawGridLine(l, basis, cx, cy, R);
+    drawAxes(basis, cx, cy, R, false);
+    drawBall(cx, cy, R);
+    drawAxes(basis, cx, cy, R, true);
+
+    // Bloch-tip trail (history up to the current frame).
+    if (state.showTrajectory && f >= 1 && d.central_bloch_vectors) {
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i <= f; i++) {
+        const v = d.central_bloch_vectors[i];
+        const p = project(v, basis, cx, cy, R);
+        if (!started) { ctx.moveTo(p.x, p.y); started = true; } else ctx.lineTo(p.x, p.y);
+      }
+      ctx.strokeStyle = state.trailColor; ctx.globalAlpha = 0.55; ctx.lineWidth = 1.6; ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // Current Bloch vector (its length = Bloch radius, shrinking as ρ_c mixes).
+    const v = d.central_bloch_vectors[f];
+    const tip = project(v, basis, cx, cy, R);
+    const o = project([0, 0, 0], basis, cx, cy, R);
+    ctx.strokeStyle = state.blochColor; ctx.globalAlpha = tip.depth >= 0 ? 1 : 0.45;
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(o.x, o.y); ctx.lineTo(tip.x, tip.y); ctx.stroke();
+    // Arrowhead.
+    const ang = Math.atan2(tip.y - o.y, tip.x - o.x);
+    const ah = Math.max(7, R * 0.05);
+    ctx.beginPath();
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(tip.x - ah * Math.cos(ang - 0.4), tip.y - ah * Math.sin(ang - 0.4));
+    ctx.lineTo(tip.x - ah * Math.cos(ang + 0.4), tip.y - ah * Math.sin(ang + 0.4));
+    ctx.closePath(); ctx.fillStyle = state.blochColor; ctx.fill();
+    ctx.beginPath(); ctx.arc(tip.x, tip.y, Math.max(3, R * 0.03), 0, Math.PI * 2);
+    ctx.fillStyle = "#1f77b4"; ctx.globalAlpha = 1; ctx.fill();
+    label(cx, cy + R + 26, "central spin — Bloch sphere");
+  }
+
+  function label(cx, cy, text) {
+    ctx.globalAlpha = 0.8; ctx.fillStyle = "#9aa7b6";
+    ctx.font = "13px system-ui, sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(text, cx, cy);
+    ctx.globalAlpha = 1;
+  }
+
+  // -----------------------------------------------------------------------
+  // Master render
+  // -----------------------------------------------------------------------
+  function render() {
+    const W = window.innerWidth, H = window.innerHeight;
+    ctx.clearRect(0, 0, W, H);
+    if (!state.data) return;
+
+    const basis = cameraBasis(view.az, view.el);
+    const hasBloch = !!state.data.central_bloch_vectors;
+    const twoUp = state.showCentral && hasBloch;
+
+    if (twoUp) {
+      const R = clamp(Math.min(W * 0.20, H * 0.33) * view.zoom, 40, 4000);
+      const cy = H * 0.53;
+      drawBloch(W * 0.28, cy, R, basis);
+      drawConstellation(W * 0.72, cy, R, basis);
+    } else {
+      const R = clamp(Math.min(W * 0.33, H * 0.40) * view.zoom, 40, 4000);
+      drawConstellation(W * 0.5, H * 0.53, R, basis);
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Playback loop
+  // -----------------------------------------------------------------------
+  let lastT = performance.now();
+  function tick(now) {
+    const dt = Math.min(0.1, (now - lastT) / 1000);
+    lastT = now;
+    if (state.playing && state.data) {
+      const n = state.data.n_frames;
+      state.frameFloat = (state.frameFloat + dt * PLAYBACK_FPS * state.speed) % n;
+      const nf = Math.floor(state.frameFloat);
+      if (nf !== state.frame) { state.frame = nf; syncFrameUI(); }
+    }
+    render();
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  // -----------------------------------------------------------------------
+  // UI sync
+  // -----------------------------------------------------------------------
+  function syncFrameUI() {
+    const d = state.data; if (!d) return;
+    const f = state.frame;
+    scrub.value = String(f);
+    const t = d.times[f];
+    tlabel.textContent = "t = " + fmt(t, 3) + "   (" + (f + 1) + "/" + d.n_frames + ")";
+    setText("r-t", fmt(t, 3));
+    setText("r-frame", (f + 1) + " / " + d.n_frames);
+    setText("r-cp", d.central_purity ? fmt(d.central_purity[f], 3) : "—");
+    setText("r-bp", d.bath_purity ? fmt(d.bath_purity[f], 3) : "—");
+    setText("r-p0", d.weights ? fmt(d.weights[f][0], 3) : "—");
+    setText("r-qfi", (state.hasDJ && d.bath_qfi) ? fmt(d.bath_qfi[f], 4) : "—");
+  }
+
+  function loadData(d) {
+    // Basic schema validation.
+    if (!d || !Array.isArray(d.stars) || !Array.isArray(d.times)) {
+      throw new Error("not a Majorana star-trajectory file (missing 'stars'/'times').");
+    }
+    d.n_frames = d.n_frames || d.times.length;
+    const cfg = d.config || {};
+    state.data = d;
+    state.frame = 0; state.frameFloat = 0; state.playing = true;
+    state.goldColor = cfg.majorana_star_color || "#f5c518";
+    state.blueColor = cfg.majorana_subdominant_color || "#2f8fd6";
+    state.trailColor = cfg.trajectory_color || "#d62728";
+    state.weightThreshold = (cfg.majorana_weight_threshold != null) ? cfg.majorana_weight_threshold : 0.005;
+    state.showTrajectory = cfg.show_trajectory !== false;
+
+    // dJ star-motion arrows (encoding) + SLD eigenvector constellations (readout).
+    state.hasDJ = d.has_dJ === true;
+    state.arrowColor = d.arrow_color || cfg.dJ_arrow_color || "#39e0c8";
+    state.arrowScale = (d.arrow_display_scale != null) ? d.arrow_display_scale : 1.0;
+    state.arrowNComp = d.dJ_arrow_n_components || 1;
+    state.sldColor = d.sld_color || cfg.sld_star_color || "#e05fd6";
+    state.sldThreshold = (d.sld_contribution_threshold != null) ? d.sld_contribution_threshold : 0.01;
+    const hasArrows = state.hasDJ && Array.isArray(d.star_velocities);
+    const hasSLD = state.hasDJ && Array.isArray(d.sld_stars)
+      && d.sld_stars.length > 0 && Array.isArray(d.sld_stars[0]) && d.sld_stars[0].length > 0;
+    showArrowsChk.disabled = !hasArrows;
+    showSLDChk.disabled = !hasSLD;
+    state.showArrows = hasArrows && showArrowsChk.checked;
+    state.showSLD = hasSLD && showSLDChk.checked;
+
+    // Banner + legend + readout.
+    document.getElementById("b-title").textContent =
+      "H = Ω·σx + J·σz·Sz + ω·Sx    (Majorana stellar representation)";
+    document.getElementById("b-params").textContent = paramLine(cfg, d);
+    document.getElementById("lg-gold").style.background = state.goldColor;
+    document.getElementById("lg-blue").style.background = state.blueColor;
+    document.getElementById("lg-red").style.background = state.trailColor;
+    document.getElementById("lg-green").style.background = state.blochColor;
+    document.getElementById("lg-arrow").style.background = state.arrowColor;
+    document.getElementById("lg-sld").style.borderColor = state.sldColor;
+
+    // Show / hide central-spin panel depending on availability.
+    const hasBloch = !!d.central_bloch_vectors;
+    showCentralChk.disabled = !hasBloch;
+    state.showCentral = hasBloch && showCentralChk.checked;
+    document.getElementById("lg-green").parentElement.style.display = hasBloch ? "" : "none";
+    document.getElementById("lg-red").parentElement.style.display = hasBloch ? "" : "none";
+
+    // Show / hide the dJ-arrow and SLD affordances depending on availability.
+    document.getElementById("lg-arrow-row").style.display = hasArrows ? "" : "none";
+    document.getElementById("lg-sld-row").style.display = hasSLD ? "" : "none";
+    document.getElementById("lab-arrows").style.display = hasArrows ? "" : "none";
+    document.getElementById("lab-sld").style.display = hasSLD ? "" : "none";
+    document.getElementById("r-qfi-row").style.display = state.hasDJ ? "" : "none";
+
+    scrub.max = String(d.n_frames - 1);
+    scrub.value = "0";
+    btnPlay.textContent = "❚❚";
+    for (const el of [banner, readout, legend, transport]) el.classList.remove("hidden");
+    dropEl.classList.add("hidden");
+    Object.assign(view, DEFAULT_VIEW);
+    syncFrameUI();
+  }
+
+  function paramLine(cfg, d) {
+    const parts = [];
+    const push = (k, key) => { if (cfg[key] != null) parts.push(k + " = " + num(cfg[key])); };
+    push("N", "N"); push("Ω", "Omega"); push("ω", "omega"); push("J", "J");
+    if (cfg.gamma) parts.push("γ = " + num(cfg.gamma));
+    if (cfg.beta) parts.push("β = " + num(cfg.beta));
+    parts.push((d.n_stars || (cfg.N)) + " stars");
+    parts.push(d.n_frames + " frames");
+    return parts.join("   ·   ");
+  }
+
+  // -----------------------------------------------------------------------
+  // File input (drag/drop + picker)
+  // -----------------------------------------------------------------------
+  function handleFile(file) {
+    errEl.textContent = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        loadData(JSON.parse(reader.result));
+      } catch (e) {
+        errEl.textContent = "Could not load: " + e.message;
+        dropEl.classList.remove("hidden");
+      }
+    };
+    reader.onerror = () => { errEl.textContent = "Could not read the file."; };
+    reader.readAsText(file);
+  }
+
+  // A depth counter tracks enter/leave across nested elements so the drop
+  // overlay reliably reappears while dragging and hides again if the drag ends
+  // over a loaded visualization without a drop.
+  let dragDepth = 0;
+  function endDrag() { dragDepth = 0; dropEl.classList.remove("dragging"); if (state.data) dropEl.classList.add("hidden"); }
+  window.addEventListener("dragenter", e => { e.preventDefault(); dragDepth++; dropEl.classList.remove("hidden"); dropEl.classList.add("dragging"); });
+  window.addEventListener("dragover", e => { e.preventDefault(); });
+  window.addEventListener("dragleave", e => { e.preventDefault(); if (--dragDepth <= 0) endDrag(); });
+  window.addEventListener("dragend", e => { e.preventDefault(); endDrag(); });
+  window.addEventListener("drop", e => {
+    e.preventDefault();
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) handleFile(f);
+    endDrag();
+  });
+  document.getElementById("pick").addEventListener("click", () => fileInput.click());
+  document.getElementById("btn-load").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); fileInput.value = ""; });
+
+  // -----------------------------------------------------------------------
+  // Orbit / zoom
+  // -----------------------------------------------------------------------
+  canvas.addEventListener("mousedown", e => { state.dragging = true; state.lastX = e.clientX; state.lastY = e.clientY; });
+  window.addEventListener("mouseup", () => { state.dragging = false; });
+  window.addEventListener("mousemove", e => {
+    if (!state.dragging) return;
+    view.az -= (e.clientX - state.lastX) * 0.01;
+    view.el = clamp(view.el + (e.clientY - state.lastY) * 0.01, -1.5, 1.5);
+    state.lastX = e.clientX; state.lastY = e.clientY;
+  });
+  canvas.addEventListener("wheel", e => {
+    e.preventDefault();
+    view.zoom = clamp(view.zoom * Math.exp(-e.deltaY * 0.0012), 0.3, 6);
+  }, { passive: false });
+
+  // Touch (single finger orbit, two finger pinch zoom).
+  let pinchDist = 0;
+  canvas.addEventListener("touchstart", e => {
+    if (e.touches.length === 1) { state.dragging = true; state.lastX = e.touches[0].clientX; state.lastY = e.touches[0].clientY; }
+    else if (e.touches.length === 2) pinchDist = touchDist(e);
+  }, { passive: false });
+  canvas.addEventListener("touchmove", e => {
+    e.preventDefault();
+    if (e.touches.length === 1 && state.dragging) {
+      view.az -= (e.touches[0].clientX - state.lastX) * 0.01;
+      view.el = clamp(view.el + (e.touches[0].clientY - state.lastY) * 0.01, -1.5, 1.5);
+      state.lastX = e.touches[0].clientX; state.lastY = e.touches[0].clientY;
+    } else if (e.touches.length === 2) {
+      const d = touchDist(e);
+      if (pinchDist) view.zoom = clamp(view.zoom * (d / pinchDist), 0.3, 6);
+      pinchDist = d;
+    }
+  }, { passive: false });
+  canvas.addEventListener("touchend", () => { state.dragging = false; pinchDist = 0; });
+  function touchDist(e) { const a = e.touches[0], b = e.touches[1]; return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
+
+  // -----------------------------------------------------------------------
+  // Transport controls
+  // -----------------------------------------------------------------------
+  function setPlaying(p) { state.playing = p; btnPlay.textContent = p ? "❚❚" : "▶"; }
+  btnPlay.addEventListener("click", () => setPlaying(!state.playing));
+  scrub.addEventListener("input", () => {
+    state.frame = parseInt(scrub.value, 10);
+    state.frameFloat = state.frame;
+    syncFrameUI();
+  });
+  speedSlider.addEventListener("input", () => {
+    state.speed = parseFloat(speedSlider.value);
+    speedVal.textContent = state.speed.toFixed(1) + "×";
+  });
+  showCentralChk.addEventListener("change", () => { state.showCentral = showCentralChk.checked; });
+  showArrowsChk.addEventListener("change", () => { state.showArrows = !showArrowsChk.disabled && showArrowsChk.checked; });
+  showSLDChk.addEventListener("change", () => { state.showSLD = !showSLDChk.disabled && showSLDChk.checked; });
+  document.getElementById("btn-reset").addEventListener("click", () => Object.assign(view, DEFAULT_VIEW));
+
+  window.addEventListener("keydown", e => {
+    if (!state.data) return;
+    if (e.code === "Space") { e.preventDefault(); setPlaying(!state.playing); }
+    else if (e.code === "ArrowRight") { step(1); }
+    else if (e.code === "ArrowLeft") { step(-1); }
+    else if (e.key === "r" || e.key === "R") { Object.assign(view, DEFAULT_VIEW); }
+  });
+  function step(dir) {
+    setPlaying(false);
+    const n = state.data.n_frames;
+    state.frame = (state.frame + dir + n) % n;
+    state.frameFloat = state.frame;
+    syncFrameUI();
+  }
+
+  // -----------------------------------------------------------------------
+  // Small utilities
+  // -----------------------------------------------------------------------
+  function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+  function fmt(x, n) { return (x == null || isNaN(x)) ? "—" : Number(x).toFixed(n); }
+  function num(x) { const v = Number(x); return Number.isInteger(v) ? String(v) : (Math.abs(v) < 1e-4 ? v.toExponential(2) : v.toPrecision(4).replace(/\.?0+$/, "")); }
+  function setText(id, t) { const el = document.getElementById(id); if (el) el.textContent = t; }
+
+  // Small public API for embedding / scripting the viewer.
+  window.MajoranaViewer = {
+    load: loadData,                       // load a parsed trajectory object
+    setFrame: function (i) {              // jump to a frame (pauses playback)
+      if (!state.data) return;
+      setPlaying(false);
+      state.frame = clamp(Math.round(i), 0, state.data.n_frames - 1);
+      state.frameFloat = state.frame;
+      syncFrameUI();
+    },
+    redraw: function () { resize(); render(); },  // force one synchronous repaint
+    getState: function () {
+      return {
+        loaded: !!state.data,
+        frame: state.frame,
+        nFrames: state.data ? state.data.n_frames : 0,
+        playing: state.playing,
+        view: { az: view.az, el: view.el, zoom: view.zoom },
+      };
+    },
+  };
+})();
+</script>
+</body>
+</html>
