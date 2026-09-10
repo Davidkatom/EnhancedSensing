@@ -32,7 +32,7 @@ QFI, whose eigenvalue weighting is evaluated separately and reported.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, asdict, fields
 from pathlib import Path
 import re
 
@@ -44,6 +44,7 @@ try:
         build_bath_operators,
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
+        PlotRecord,
         qfi_vectorized,
         save_plot,
     )
@@ -52,6 +53,7 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_phase_cycling.py
         build_bath_operators,
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
+        PlotRecord,
         qfi_vectorized,
         save_plot,
     )
@@ -365,7 +367,7 @@ def output_path(cfg: PhaseCyclingConfig) -> Path:
 def plot_phase_cycling(
     result: PhaseCyclingResult,
     cfg: PhaseCyclingConfig,
-) -> Path:
+) -> PlotRecord:
     """Plot the phase signal and exact/Fourier coherence-order spectrum."""
     figure, (signal_axis, spectrum_axis) = plt.subplots(
         2,
@@ -443,12 +445,37 @@ def plot_phase_cycling(
     figure.tight_layout()
 
     path = output_path(cfg)
+    # The phase trace and the coherence-order spectra use different abscissae,
+    # so each series carries its own x array.
     path = save_plot(
         figure,
-        path,
-        metadata={"config": cfg, "result": result},
+        system="central_spin",
+        plot_type="phase_cycling",
+        params=asdict(cfg),
+        data={
+            "Signal": (result.phases_rad, result.signal.real),
+            "Exact order weight": (
+                result.coherence_orders,
+                result.exact_intensities,
+            ),
+            "Fourier order weight": (
+                result.coherence_orders,
+                result.fourier_intensities,
+            ),
+            "Derivative order weight": (
+                result.coherence_orders,
+                result.derivative_intensities,
+            ),
+        },
+        name=path.stem,
+        xlabel=r"Phase-cycling angle $\phi$ / coherence order $k$",
+        ylabel="Signal and normalized order weight",
+        metadata={
+            "purity": result.purity,
+            "derivative_norm_squared": result.derivative_norm_squared,
+            "bath_qfi": result.bath_qfi,
+        },
         script_path=__file__,
-        format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",
     )

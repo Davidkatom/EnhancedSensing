@@ -26,7 +26,7 @@ It also evaluates the classical Fisher information of a projective collective
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, asdict, fields
 from pathlib import Path
 import sys
 
@@ -53,6 +53,7 @@ from CRB.crb_core import (  # noqa: E402
     central_spin_state,
     coherent_bath_state,
     observable_projective_fisher,
+    PlotRecord,
     qfi_vectorized,
     save_plot,
 )
@@ -323,7 +324,7 @@ def output_path(cfg: EchoPhaseCyclingConfig) -> Path:
 def plot_echo_phase_cycling(
     result: EchoPhaseCyclingResult,
     cfg: EchoPhaseCyclingConfig,
-) -> Path:
+) -> PlotRecord:
     """Plot phase cycling, order spectra, and post-echo Fisher information."""
     figure, (signal_axis, spectrum_axis, information_axis) = plt.subplots(
         3,
@@ -422,12 +423,38 @@ def plot_echo_phase_cycling(
     figure.tight_layout()
 
     path = output_path(cfg)
+    # The phase trace and the coherence-order spectra use different abscissae,
+    # so each series carries its own x array.
     path = save_plot(
         figure,
-        path,
-        metadata={"config": cfg, "result": result},
+        system="central_spin",
+        plot_type="echo_phase_cycling",
+        params=asdict(cfg),
+        data={
+            "Signal": (result.phases_rad, result.signal.real),
+            "Coherence-order weight": (
+                result.coherence_orders,
+                result.coherence_intensities,
+            ),
+            "Derivative order weight": (
+                result.coherence_orders,
+                result.derivative_intensities,
+            ),
+            "Fourier order weight": (
+                result.coherence_orders,
+                result.fourier_intensities,
+            ),
+        },
+        name=path.stem,
+        xlabel=r"Phase-cycling angle $\phi$ / coherence order $k$",
+        ylabel="Signal and normalized order weight",
+        metadata={
+            "purity": result.purity,
+            "derivative_norm_squared": result.derivative_norm_squared,
+            "bath_qfi": result.bath_qfi,
+            "dicke_population_fi": result.dicke_population_fi,
+        },
         script_path=__file__,
-        format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",
     )

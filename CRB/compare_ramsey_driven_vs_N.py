@@ -25,7 +25,7 @@ global QFI is locally accessible from the bath and from the central spin,
 plotting ``FQ_Bath/FQ_global`` and ``FQ_central/FQ_global`` against N.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -40,6 +40,7 @@ try:
         coherent_bath_state,
         compute_bath_qfi_trajectory,
         get_bath_density_matrices,
+        PlotRecord,
         qfi_from_rho_and_drho,
         save_plot,
     )
@@ -51,6 +52,7 @@ except ModuleNotFoundError:  # Allow: python CRB/compare_ramsey_driven_vs_N.py
         coherent_bath_state,
         compute_bath_qfi_trajectory,
         get_bath_density_matrices,
+        PlotRecord,
         qfi_from_rho_and_drho,
         save_plot,
     )
@@ -329,10 +331,18 @@ def fit_power_law(
     return float(np.exp(log_prefactor)), float(exponent), r_squared
 
 
+def _series_name(protocol: Protocol, quantity: str) -> str:
+    """Name one explorer series after the protocol that produced it."""
+    return (
+        f"{protocol.name} (Omega={protocol.Omega:g}, omega={protocol.omega:g})"
+        f": {quantity}"
+    )
+
+
 def plot_comparison(
     results: dict[Protocol, dict[str, np.ndarray]],
     cfg: ComparisonConfig,
-) -> Path:
+) -> PlotRecord:
     """Plot the optimized fixed-total-time QCRB against N."""
     figure, axis = plt.subplots(figsize=(9, 6))
 
@@ -387,12 +397,18 @@ def plot_comparison(
     output_path = save_plot(
         figure,
         cfg.output_figure,
-        metadata={
-            "config": cfg,
-            "protocols": PROTOCOLS,
-            "results": results,
-            "plot": "time_normalized_qcrb_comparison",
+        system="central_spin",
+        plot_type="time_normalized_qcrb_vs_N",
+        params={**asdict(cfg), "protocols": PROTOCOLS},
+        data={
+            _series_name(protocol, "QCRB"): (
+                results[protocol]["N"],
+                results[protocol]["qcrb_opt"],
+            )
+            for protocol in PROTOCOLS
         },
+        xscale="log",
+        yscale="log",
         script_path=__file__,
         dpi=200,
         bbox_inches="tight",
@@ -404,7 +420,7 @@ def plot_comparison(
 def plot_fq_fractions(
     results: dict[Protocol, dict[str, np.ndarray]],
     cfg: ComparisonConfig,
-) -> Path:
+) -> PlotRecord:
     """Plot subsystem-to-global QFI ratios at each bath-optimal time."""
     figure, axis = plt.subplots(figsize=(10, 6.5))
 
@@ -446,11 +462,16 @@ def plot_fq_fractions(
     output_path = save_plot(
         figure,
         cfg.output_fraction_figure,
-        metadata={
-            "config": cfg,
-            "protocols": PROTOCOLS,
-            "results": results,
-            "plot": "subsystem_qfi_fractions",
+        system="central_spin",
+        plot_type="subsystem_qfi_fractions_vs_N",
+        params={**asdict(cfg), "protocols": PROTOCOLS},
+        data={
+            name: (results[protocol]["N"], results[protocol][key])
+            for protocol in PROTOCOLS
+            for key, name in (
+                ("fq_bath_over_global", _series_name(protocol, "bath/global")),
+                ("fq_central_over_global", _series_name(protocol, "central/global")),
+            )
         },
         script_path=__file__,
         dpi=200,

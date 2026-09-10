@@ -26,11 +26,13 @@ sensitivities of the SLD to ``J``, ``Omega``, and ``omega``.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, fields, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, asdict, fields, replace
 from itertools import product
 from pathlib import Path
 import re
 import sys
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -56,6 +58,7 @@ from CRB.OrderAnalysis.plot_phase_cycling import (  # noqa: E402
 from CRB.crb_core import (  # noqa: E402
     build_bath_operators,
     fisher_metric_decomposition,
+    PlotRecord,
     qfi_from_rho_and_drho,
     save_plot,
 )
@@ -658,17 +661,32 @@ def save_figure(
     label: str,
     result: SLDAnalysisResult,
     cfg: SLDAnalysisConfig,
-) -> Path:
-    """Save and close one parameter-rich analysis figure."""
+    data: Mapping[str, Any],
+    *,
+    ylabel: str,
+    yscale: str = "linear",
+) -> PlotRecord:
+    """Save and close one parameter-rich analysis figure with its curves."""
     path = Path(
         f"{label}__{parameter_tags(cfg)}.{cfg.figure_format.lower()}"
     )
     path = save_plot(
         figure,
-        path,
-        metadata={"config": cfg, "result": result, "plot_label": label},
+        system="central_spin",
+        plot_type=label.replace("-", "_"),
+        params=asdict(cfg),
+        data=data,
+        name=path.stem,
+        xlabel="Chronological protocol sample index",
+        ylabel=ylabel,
+        yscale=yscale,
+        metadata={
+            "basis_labels": result.basis_labels,
+            "preparation_end_index": result.preparation_end_index,
+            "sensing_end_indices": result.sensing_end_indices,
+            "cycle_end_indices": result.cycle_end_indices,
+        },
         script_path=__file__,
-        format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",
     )
@@ -731,7 +749,20 @@ def plot_sld_spectrum(
         rf"$\omega={cfg.omega:g}$"
     )
     figure.tight_layout()
-    return save_figure(figure, "sld-spectrum-vs-time", result, cfg)
+    spectrum_data = {
+        f"L_J eigenvalue {index}": (x, eigenvalues)
+        for index, eigenvalues in enumerate(result.sld_eigenvalues)
+    }
+    spectrum_data["||L_J||_F"] = (x, result.sld_frobenius_norm)
+    spectrum_data["F_Q bath"] = (x, result.bath_qfi)
+    return save_figure(
+        figure,
+        "sld-spectrum-vs-time",
+        result,
+        cfg,
+        spectrum_data,
+        ylabel="Eigenvalues of $L_J$",
+    )
 
 
 def plot_reconstruction_hierarchy(
@@ -794,7 +825,28 @@ def plot_reconstruction_hierarchy(
         rf"maximum word order $={cfg.basis_max_order}$"
     )
     figure.tight_layout()
-    return save_figure(figure, "sld-xy-reconstruction", result, cfg)
+    reconstruction_data = {"F_Q bath": (x, result.bath_qfi)}
+    for order in range(1, cfg.basis_max_order + 1):
+        reconstruction_data[f"Captured F_Q, words through order {order}"] = (
+            x,
+            result.captured_qfi_by_order[order - 1],
+        )
+        reconstruction_data[f"Captured fraction, order <= {order}"] = (
+            x,
+            result.captured_fraction_by_order[order - 1],
+        )
+    reconstruction_data["Relative reconstruction error"] = (
+        x,
+        result.full_reconstruction_frobenius_error,
+    )
+    return save_figure(
+        figure,
+        "sld-xy-reconstruction",
+        result,
+        cfg,
+        reconstruction_data,
+        ylabel="Fisher information",
+    )
 
 
 def plot_word_coefficients(
@@ -850,7 +902,19 @@ def plot_word_coefficients(
         r"Each displayed $H[W]$ or $K[W]$ operator is Frobenius normalized"
     )
     figure.tight_layout()
-    return save_figure(figure, "sld-xy-word-coefficients", result, cfg)
+    # Every word keeps its own series, not only the curves drawn above.
+    coefficient_data = {
+        f"{index}: {label}": (x, result.coefficients[index])
+        for index, label in enumerate(result.basis_labels)
+    }
+    return save_figure(
+        figure,
+        "sld-xy-word-coefficients",
+        result,
+        cfg,
+        coefficient_data,
+        ylabel="Fisher-metric coefficient",
+    )
 
 
 def plot_parameter_sensitivities(
@@ -902,7 +966,18 @@ def plot_parameter_sensitivities(
     axis.grid(True, which="both", linestyle=":", alpha=0.7)
     axis.legend()
     figure.tight_layout()
-    return save_figure(figure, "sld-parameter-sensitivity", result, cfg)
+    return save_figure(
+        figure,
+        "sld-parameter-sensitivity",
+        result,
+        cfg,
+        {
+            f"Sensitivity to {parameter}": (x, values)
+            for parameter, values in result.parameter_sensitivities.items()
+        },
+        ylabel="Dimensionless local SLD sensitivity",
+        yscale="log" if cfg.sensitivity_log_y else "linear",
+    )
 
 
 def plot_analysis(

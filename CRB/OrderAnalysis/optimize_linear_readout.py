@@ -47,6 +47,7 @@ from CRB.crb_core import (  # noqa: E402
     build_hamiltonian,
     central_spin_state,
     coherent_bath_state,
+    PlotRecord,
     qfi_vectorized,
     save_plot,
 )
@@ -884,23 +885,40 @@ def plot_heatmaps(
     scan: LinearReadoutScan,
     optima: dict[str, dict[str, Any]],
     cfg: LinearReadoutConfig,
-) -> list[Path]:
+) -> list[PlotRecord]:
     """Create the five required figures and optional accessibility heatmap."""
     tag = _tag(cfg)
     paths: list[Path] = []
 
-    def save_figure(figure: Any, filename: str, plot_name: str) -> Path:
+    def grid_cuts(values: np.ndarray, quantity: str) -> dict[str, tuple]:
+        """Store a (t_s, t_d) map as one t_d cut per sensing time.
+
+        Explorer series are one-dimensional, so a map travels as a family of
+        cuts rather than being reduced; no value is dropped.
+        """
+        return {
+            f"{quantity}, ts={sensing_time:g}": (scan.td_values, values[row])
+            for row, sensing_time in enumerate(scan.ts_values)
+        }
+
+    def save_figure(
+        figure: Any,
+        filename: str,
+        plot_name: str,
+        data: dict[str, tuple],
+        ylabel: str,
+    ) -> PlotRecord:
         return save_plot(
             figure,
-            filename,
-            metadata={
-                "config": cfg,
-                "plot": plot_name,
-                "optima": optima,
-                "scan": scan,
-            },
+            system="central_spin",
+            plot_type=plot_name,
+            params=asdict(cfg),
+            data=data,
+            name=Path(filename).stem,
+            xlabel=r"Decoding time $t_d$",
+            ylabel=ylabel,
+            metadata={"optima": optima},
             script_path=__file__,
-            format=cfg.figure_format,
             dpi=cfg.figure_dpi,
             bbox_inches="tight",
         )
@@ -926,6 +944,8 @@ def plot_heatmaps(
             figure,
             f"figure1_log_rate_{tag}.{cfg.figure_format}",
             "log_information_rate_heatmap",
+            grid_cuts(log_rate, "log10 R_lin"),
+            r"$\log_{10}R_{\rm lin}$",
         )
     )
     if cfg.show_figure:
@@ -948,6 +968,8 @@ def plot_heatmaps(
             figure,
             f"figure2_rate_{tag}.{cfg.figure_format}",
             "information_rate_heatmap",
+            grid_cuts(scan.rate, "R_lin"),
+            r"$R_{\rm lin}$",
         )
     )
     if cfg.show_figure:
@@ -968,6 +990,8 @@ def plot_heatmaps(
             figure,
             f"figure3_eta_{tag}.{cfg.figure_format}",
             "eta_heatmap",
+            grid_cuts(finite_eta, "eta_lin"),
+            r"$\eta_{\rm lin}$",
         )
     )
     if cfg.show_figure:
@@ -991,6 +1015,13 @@ def plot_heatmaps(
             figure,
             f"figure4_axes_{tag}.{cfg.figure_format}",
             "readout_axis_rate_comparison",
+            {
+                "R_lin max": (scan.td_values, scan.rate[its]),
+                "R_x": (scan.td_values, scan.rate_x[its]),
+                "R_y": (scan.td_values, scan.rate_y[its]),
+                "R_z": (scan.td_values, scan.rate_z[its]),
+            },
+            r"Information rate $F/(t_s+t_d)$",
         )
     )
     if cfg.show_figure:
@@ -1013,6 +1044,12 @@ def plot_heatmaps(
             figure,
             f"figure5_direction_{tag}.{cfg.figure_format}",
             "optimal_measurement_direction",
+            {
+                "n_x": (scan.td_values, scan.nx[its]),
+                "n_y": (scan.td_values, scan.ny[its]),
+                "n_z": (scan.td_values, scan.nz[its]),
+            },
+            "Optimal direction component",
         )
     )
     if cfg.show_figure:
@@ -1035,6 +1072,8 @@ def plot_heatmaps(
                 figure,
                 f"figure6_accessibility_{tag}.{cfg.figure_format}",
                 "qfi_accessibility_heatmap",
+                grid_cuts(scan.accessibility_fraction, "F_lin/F_Q"),
+                r"$F_{\rm lin}^{\max}/F_Q^{\rm bath}$",
             )
         )
         if cfg.show_figure:

@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import qutip as qt
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 try:
     from CRB.crb_core import save_plot
@@ -272,12 +272,19 @@ def plot_results(
     save_plot(
         fig,
         output_figure,
+        system="central_spin",
+        plot_type="bath_qcrb_vs_omega",
+        params=asdict(cfg),
+        data={
+            "Min bath-only QCRB": (omega_list, min_qcrb_per_omega),
+            r"Optimal time $t^*$": (omega_list, optimal_times),
+        },
+        xlabel=r"Transverse field $\Omega$",
+        ylabel=r"$\min_t$ QCRB",
+        yscale="log",
         metadata={
-            "config": cfg,
-            "omega_values": omega_list,
+            "solver": "full_hilbert",
             "time_values": tlist,
-            "normalized_qcrb_minima": min_qcrb_per_omega,
-            "optimal_times": optimal_times,
             "optimal_omega": optimal_omega,
             "minimum_normalized_qcrb": min_qcrb_per_omega[optimal_idx],
         },

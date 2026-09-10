@@ -60,7 +60,7 @@ decoder alone holds ``J0`` fixed.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, asdict, fields
 from pathlib import Path
 import re
 import sys
@@ -91,6 +91,7 @@ from CRB.crb_core import (  # noqa: E402
     observable_moment_fisher,
     observable_projective_fisher,
     observable_projective_score,
+    PlotRecord,
     qfi_from_rho_and_drho,
     save_plot,
 )
@@ -596,7 +597,7 @@ def sld_sx_projection_output_path(cfg: EchoBathClassicalFIConfig) -> Path:
 def plot_echo_bath_classical_fi(
     result: EchoBathClassicalFIResult,
     cfg: EchoBathClassicalFIConfig,
-) -> Path:
+) -> PlotRecord:
     """Plot bath QFI, SLD/spin classical FI, and ``<S_x>`` diagnostics."""
     figure, (fisher_axis, spin_axis) = plt.subplots(
         2,
@@ -782,10 +783,43 @@ def plot_echo_bath_classical_fi(
     path = output_path(cfg)
     path = save_plot(
         figure,
-        path,
-        metadata={"config": cfg, "result": result},
+        system="central_spin",
+        plot_type="echo_bath_fisher_vs_time",
+        params=asdict(cfg),
+        data={
+            "F_Q bath": (result.protocol_times, result.bath_qfi),
+            "F_C [SLD]": (result.protocol_times, result.classical_fi_sld),
+            "F_C [<S_x>]": (result.protocol_times, result.classical_fi_x),
+            "F_C [<S_y>]": (result.protocol_times, result.classical_fi_y),
+            "F_C [<S_z>]": (result.protocol_times, result.classical_fi_z),
+            "F_C [S_x projective]": (
+                result.protocol_times,
+                result.classical_fi_x_projective,
+            ),
+            "F_C [S_y projective]": (
+                result.protocol_times,
+                result.classical_fi_y_projective,
+            ),
+            "F_C [S_z projective]": (
+                result.protocol_times,
+                result.classical_fi_z_projective,
+            ),
+            "F_C [projective sum]": (
+                result.protocol_times,
+                result.classical_fi_projective_sum,
+            ),
+            "<S_x>": (result.protocol_times, result.spin_x_expectation),
+            "d<S_x>/dJ": (result.protocol_times, result.spin_x_derivative),
+        },
+        name=path.stem,
+        xlabel=r"Protocol time $\tau$",
+        ylabel="Fisher information",
+        metadata={
+            "preparation_end_index": result.preparation_end_index,
+            "sensing_end_indices": result.sensing_end_indices,
+            "cycle_end_indices": result.cycle_end_indices,
+        },
         script_path=__file__,
-        format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",
     )
@@ -798,7 +832,7 @@ def plot_echo_bath_classical_fi(
 def plot_sld_sx_projection(
     result: EchoBathClassicalFIResult,
     cfg: EchoBathClassicalFIConfig,
-) -> Path:
+) -> PlotRecord:
     """Plot the full ``S_x`` projective-score/SLD overlap identity."""
     figure, axis = plt.subplots(
         figsize=(cfg.figure_width_in, cfg.figure_height_in),
@@ -899,10 +933,28 @@ def plot_sld_sx_projection(
     path = sld_sx_projection_output_path(cfg)
     path = save_plot(
         figure,
-        path,
-        metadata={"config": cfg, "result": result},
+        system="central_spin",
+        plot_type="sld_sx_projection_vs_time",
+        params=asdict(cfg),
+        data={
+            "SLD / S_x projective overlap": (
+                result.protocol_times,
+                result.sld_sx_projective_fraction,
+            ),
+            "F_C [S_x projective] / F_Q bath": (
+                result.protocol_times,
+                result.sx_projective_fi_over_qfi,
+            ),
+        },
+        name=path.stem,
+        xlabel=r"Protocol time $\tau$",
+        ylabel="Fraction of bath QFI captured",
+        metadata={
+            "preparation_end_index": result.preparation_end_index,
+            "sensing_end_indices": result.sensing_end_indices,
+            "cycle_end_indices": result.cycle_end_indices,
+        },
         script_path=__file__,
-        format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",
     )

@@ -27,7 +27,7 @@ quantity is
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, asdict, fields
 from pathlib import Path
 import sys
 
@@ -53,6 +53,7 @@ from CRB.crb_core import (  # noqa: E402
     central_spin_state,
     coherent_bath_state,
     observable_moment_fisher,
+    PlotRecord,
     qfi_vectorized,
     save_plot,
 )
@@ -399,7 +400,7 @@ def output_path(cfg: EchoFirstOrderConfig) -> Path:
 def plot_echo_first_order(
     result: EchoFirstOrderResult,
     cfg: EchoFirstOrderConfig,
-) -> Path:
+) -> PlotRecord:
     """Plot QFI divided by the sum of three linear-moment FI values."""
     figure, axis = plt.subplots(
         figsize=(cfg.figure_width_in, cfg.figure_height_in),
@@ -441,10 +442,24 @@ def plot_echo_first_order(
     path = output_path(cfg)
     path = save_plot(
         figure,
-        path,
-        metadata={"config": cfg, "result": result},
+        system="central_spin",
+        plot_type="echo_first_order_vs_decode_time",
+        params=asdict(cfg),
+        data={
+            "F_Q / sum_i F_C": (
+                result.decode_times,
+                result.qfi_to_classical_sum_ratio,
+            ),
+            "F_Q [bath]": (result.decode_times, result.bath_qfi),
+            "F_C [<S_x>]": (result.decode_times, result.classical_fi_x),
+            "F_C [<S_y>]": (result.decode_times, result.classical_fi_y),
+            "F_C [<S_z>]": (result.decode_times, result.classical_fi_z),
+            "sum_i F_C": (result.decode_times, result.classical_fi_sum),
+        },
+        name=path.stem,
+        xlabel=r"Decoding time $t_d$",
+        ylabel=r"$F_Q/\sum_iF_C[\langle S_i\rangle]$",
         script_path=__file__,
-        format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",
     )

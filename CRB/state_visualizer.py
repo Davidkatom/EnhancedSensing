@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, asdict, fields
 from pathlib import Path
 
 import matplotlib
@@ -65,6 +65,7 @@ try:
         build_spin_operators,
         central_spin_state,
         coherent_bath_state,
+        PlotRecord,
         save_plot,
     )
 except ModuleNotFoundError:  # Allow: python CRB/state_visualizer.py
@@ -73,6 +74,7 @@ except ModuleNotFoundError:  # Allow: python CRB/state_visualizer.py
         build_spin_operators,
         central_spin_state,
         coherent_bath_state,
+        PlotRecord,
         save_plot,
     )
 
@@ -516,19 +518,26 @@ def save_poster_frame(
     figure: plt.Figure,
     times: np.ndarray,
     trajectory: TrajectoryData,
-) -> Path:
+) -> PlotRecord:
     """Save the final rendered frame via the shared metadata-aware saver."""
     filename = animation_output_path(cfg).with_suffix(".png").name
+    # Explorer series are one-dimensional, so the Bloch vector travels as its
+    # three components; the Husimi grids stay in the animation only.
     return save_plot(
         figure,
-        filename,
-        metadata={
-            "config": cfg,
-            "time_values": times,
-            "central_bloch_vectors": trajectory.bloch_vectors,
-            "central_purity": trajectory.central_purity,
-            "husimi_peak": trajectory.husimi_vmax,
+        system="central_spin",
+        plot_type="bloch_trajectory",
+        params=asdict(cfg),
+        data={
+            "<sigma_x>": (times, trajectory.bloch_vectors[:, 0]),
+            "<sigma_y>": (times, trajectory.bloch_vectors[:, 1]),
+            "<sigma_z>": (times, trajectory.bloch_vectors[:, 2]),
+            "Central purity": (times, trajectory.central_purity),
         },
+        name=Path(filename).stem,
+        xlabel=r"Interrogation time $t$",
+        ylabel="Trajectory observables",
+        metadata={"husimi_peak": trajectory.husimi_vmax},
         script_path=__file__,
         dpi=cfg.figure_dpi,
     )

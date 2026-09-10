@@ -29,7 +29,7 @@ from itertools import combinations_with_replacement, permutations
 import json
 from pathlib import Path
 import sys
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -46,6 +46,7 @@ from CRB.crb_core import (  # noqa: E402
     build_spin_operators,
     central_spin_state,
     coherent_bath_state,
+    PlotRecord,
     qfi_from_rho_and_drho,
     save_plot,
 )
@@ -1647,15 +1648,24 @@ def _save_analyzer_figure(
     filename: str,
     cfg: AnalyzerConfig,
     plot_name: str,
-    result: Any,
-) -> Path:
-    """Save one optimizer figure with its configuration and result metadata."""
+    data: Mapping[str, Any],
+    *,
+    xlabel: str,
+    ylabel: str,
+    xscale: str = "linear",
+) -> PlotRecord:
+    """Save one optimizer figure together with the curves it draws."""
     return save_plot(
         figure,
-        filename,
-        metadata={"config": cfg, "plot": plot_name, "result": result},
+        system="central_spin",
+        plot_type=plot_name,
+        params=asdict(cfg),
+        data=data,
+        name=Path(filename).stem,
+        xlabel=xlabel,
+        ylabel=ylabel,
+        xscale=xscale,
         script_path=__file__,
-        format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",
     )
@@ -1687,7 +1697,9 @@ def plot_control(
         f"control_K{result.K}_{_base_tag(cfg)}.{cfg.figure_format}",
         cfg,
         "optimized_control_waveforms",
-        result,
+        {"u_c(t)": (edges, central), "u_b(t)": (edges, bath)},
+        xlabel="Analyzer time",
+        ylabel="Control amplitude",
     )
     if cfg.show_figure:
         plt.show()
@@ -1730,7 +1742,16 @@ def plot_robustness(result: OptimizedAnalyzer, cfg: AnalyzerConfig) -> Path:
         f"robustness_K{result.K}_{_base_tag(cfg)}.{cfg.figure_format}",
         cfg,
         "heldout_robustness",
-        result,
+        {
+            "Analyzer FI rate": (offsets, result.heldout_analyzer_rate),
+            "Ramsey FI rate": (offsets, result.heldout_ramsey_rate),
+            "Analyzer / Ramsey": (offsets, result.heldout_advantage),
+            "Analyzer / Ramsey, raw": (offsets, raw_advantage),
+            "Bath QFI rate": (offsets, result.heldout_bath_qfi_rate),
+            "Held-out point trusted": (offsets, result.heldout_trust.astype(float)),
+        },
+        xlabel="$J-J_0$",
+        ylabel="Rate and ratio",
     )
     if cfg.show_figure:
         plt.show()
@@ -1756,7 +1777,13 @@ def plot_information_flow(result: OptimizedAnalyzer, cfg: AnalyzerConfig) -> Pat
         f"information_flow_K{result.K}_{_base_tag(cfg)}.{cfg.figure_format}",
         cfg,
         "information_flow",
-        result,
+        {
+            "F_Q global": (result.flow_times, result.flow_global_qfi),
+            "F_Q bath": (result.flow_times, result.flow_bath_qfi),
+            "F_C [S_x]": (result.flow_times, result.flow_projective_fi),
+        },
+        xlabel="Analyzer elapsed time (0 = sensing end)",
+        ylabel="Information",
     )
     if cfg.show_figure:
         plt.show()
@@ -1799,7 +1826,13 @@ def plot_efficiency(result: OptimizedAnalyzer, cfg: AnalyzerConfig) -> Path:
         f"efficiency_K{result.K}_{_base_tag(cfg)}.{cfg.figure_format}",
         cfg,
         "information_efficiencies",
-        result,
+        {
+            "F_Q bath / F_Q global": (result.flow_times, bath_efficiency),
+            "F_C [S_x] / F_Q bath": (result.flow_times, measurement_efficiency),
+            "F_C [S_x] / F_Q global": (result.flow_times, total_efficiency),
+        },
+        xlabel="Analyzer elapsed time",
+        ylabel="Efficiency",
     )
     if cfg.show_figure:
         plt.show()
@@ -1835,7 +1868,10 @@ def plot_complexity(results: Sequence[OptimizedAnalyzer], cfg: AnalyzerConfig) -
         f"complexity_{_base_tag(cfg)}.{cfg.figure_format}",
         cfg,
         "control_complexity_ladder",
-        results,
+        {"Worst trusted F_C[S_x] / F_Q global": (K_values, robust_efficiency)},
+        xlabel="Number of analyzer segments K",
+        ylabel="Worst trusted $F_C^{S_x}/F_Q^{global}$",
+        xscale="log",
     )
     if cfg.show_figure:
         plt.show()

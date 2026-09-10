@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import matplotlib.pyplot as plt
 import numpy as np
 import qutip as qt
@@ -411,7 +411,7 @@ def plot_vs_N_results(
     
     handles3, labels3 = axes[3].get_legend_handles_labels()
     handles4, labels4 = twin_ax4.get_legend_handles_labels()
-    axes[3].legend(handles3 + handles4, loc="upper right")
+    axes[3].legend(handles3 + handles4, labels3 + labels4, loc="upper right")
 
     # --- Plot 5: Fraction of global QFI accessible in each subsystem ---
     axes[4].plot(
@@ -444,19 +444,23 @@ def plot_vs_N_results(
     save_plot(
         fig,
         output_figure,
-        metadata={
-            "config": cfg,
-            "N_values": N_values,
-            "normalized_qcrb_minima": min_qcrb_norm,
-            "unnormalized_qcrb_minima": min_qcrb_unnorm,
-            "optimal_omega_normalized": opt_omega_norm,
-            "optimal_omega_unnormalized": opt_omega_unnorm,
-            "optimal_time_normalized": opt_t_norm,
-            "optimal_time_unnormalized": opt_t_unnorm,
-            "optimal_quadrature_angles": opt_quadrature_angle_norm,
-            "bath_qfi_fraction": fq_bath_over_global,
-            "central_qfi_fraction": fq_central_over_global,
+        system="central_spin",
+        plot_type="bath_qcrb_vs_N",
+        params=asdict(cfg),
+        data={
+            "QCRB, time-normalized": (N_values, min_qcrb_norm),
+            "QCRB, unnormalized": (N_values, min_qcrb_unnorm),
+            r"Optimal $\Omega$, time-normalized": (N_values, opt_omega_norm),
+            r"Optimal $\Omega$, unnormalized": (N_values, opt_omega_unnorm),
+            r"Optimal time $t^*$, time-normalized": (N_values, opt_t_norm),
+            r"Optimal time $t^*$, unnormalized": (N_values, opt_t_unnorm),
+            "Optimal quadrature angle": (N_values, opt_quadrature_angle_norm),
+            "Bath QFI fraction": (N_values, fq_bath_over_global),
+            "Central QFI fraction": (N_values, fq_central_over_global),
         },
+        xlabel=r"Number of bath qubits $N$",
+        ylabel="QCRB and optimum trackers",
+        metadata={"solver": "collective_dicke"},
         script_path=__file__,
         bbox_inches="tight",
     )

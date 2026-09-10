@@ -28,6 +28,7 @@ try:
     from CRB.crb_core import (
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
+        PlotRecord,
         qfi_from_rho_and_drho,
         save_plot,
     )
@@ -35,6 +36,7 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_driven_qfi_map.py
     from crb_core import (
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
+        PlotRecord,
         qfi_from_rho_and_drho,
         save_plot,
     )
@@ -447,7 +449,7 @@ def plot_qfi_map(
     omega_values: np.ndarray,
     Omega_values: np.ndarray,
     cfg: SweepConfig,
-) -> Path:
+) -> PlotRecord:
     """Save the QFI map under the traceable graph path for ``cfg``."""
     plotted_qfi = np.ma.masked_invalid(qfi)
     if plotted_qfi.count() == 0:
@@ -481,17 +483,22 @@ def plot_qfi_map(
     figure.tight_layout()
 
     figure_path, _ = output_paths(cfg)
+    # The explorer record stores one-dimensional series, so the map is written
+    # as one cut per bath drive: F_Q versus Omega at fixed omega.  Every value
+    # in the map is preserved, and the viewer can difference or ratio the cuts.
     figure_path = save_plot(
         figure,
-        figure_path,
-        metadata={
-            "config": cfg,
-            "central_drive_values": Omega_values,
-            "bath_drive_values": omega_values,
-            "bath_qfi": qfi,
+        system="central_spin",
+        plot_type="bath_qfi_drive_map",
+        params=asdict(cfg),
+        data={
+            f"omega={bath_drive:g}": (Omega_values, qfi[row])
+            for row, bath_drive in enumerate(omega_values)
         },
+        name=figure_path.stem,
+        xlabel=r"Central-spin drive $\Omega$",
+        ylabel=r"Bath quantum Fisher information $F_Q$",
         script_path=__file__,
-        format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",
     )

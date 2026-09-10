@@ -1,6 +1,6 @@
 """Bath-only QFI analysis for the collective Dicke-like model."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -281,16 +281,32 @@ def plot_qfi_results(
     save_plot(
         fig,
         output_figure,
+        system="central_spin",
+        plot_type="bath_qcrb_vs_omega",
+        params=asdict(cfg),
+        data={
+            r"Quantum, time-normalized: $\min_t\sqrt{(t+t_{oh})/F_Q}$": (
+                omega_list,
+                min_qcrb_per_omega,
+            ),
+            r"Quantum, unnormalized: $\min_t 1/\sqrt{F_Q}$": (
+                omega_list,
+                min_qcrb_unnormalized_per_omega,
+            ),
+            r"Classical $J_y$, time-normalized": (omega_list, min_ccrb_per_omega),
+            r"Classical $J_y$, unnormalized": (
+                omega_list,
+                min_ccrb_unnormalized_per_omega,
+            ),
+            r"Optimal time $t^*$": (omega_list, optimal_times),
+            "Optimal quadrature angle": (omega_list, opt_quadrature_angles),
+        },
+        xlabel=r"Transverse field $\Omega$",
+        ylabel=r"CRB $\delta J$",
+        yscale="log",
         metadata={
-            "config": cfg,
-            "omega_values": omega_list,
+            "probe_beta_deg": probe_beta_deg,
             "time_values": tlist,
-            "normalized_qcrb_minima": min_qcrb_per_omega,
-            "unnormalized_qcrb_minima": min_qcrb_unnormalized_per_omega,
-            "classical_crb_minima": min_ccrb_per_omega,
-            "classical_crb_unnormalized_minima": min_ccrb_unnormalized_per_omega,
-            "optimal_times": optimal_times,
-            "optimal_quadrature_angles": opt_quadrature_angles,
             "optimal_omega": optimal_omega,
             "unnormalized_optimal_omega": unnormalized_optimal_omega,
         },

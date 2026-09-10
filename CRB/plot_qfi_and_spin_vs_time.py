@@ -18,7 +18,7 @@ the central spin in ``|1>`` and the bath in ``|+>**N`` under zero drives.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, asdict, fields
 from pathlib import Path
 import re
 
@@ -34,6 +34,7 @@ try:
         central_spin_state,
         coherent_bath_state,
         observable_moment_fisher,
+        PlotRecord,
         qfi_vectorized,
         save_plot,
     )
@@ -44,6 +45,7 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_qfi_and_spin_vs_time.py
         central_spin_state,
         coherent_bath_state,
         observable_moment_fisher,
+        PlotRecord,
         qfi_vectorized,
         save_plot,
     )
@@ -618,7 +620,7 @@ def plot_trajectories(
     ramsey_classical_fisher: dict[str, np.ndarray],
     ramsey_spin_expectations: dict[str, np.ndarray],
     cfg: SimulationConfig,
-) -> Path:
+) -> PlotRecord:
     """Plot driven trajectories beside the naive Ramsey comparison."""
     figure = plt.figure(figsize=(cfg.figure_width_in, cfg.figure_height_in))
     grid = figure.add_gridspec(4, 2, hspace=0.08, wspace=0.28)
@@ -784,22 +786,42 @@ def plot_trajectories(
     figure.subplots_adjust(top=0.93, bottom=0.07, left=0.07, right=0.98)
 
     path = output_path(cfg)
+    # Every panel trace becomes its own explorer series, prefixed by the
+    # protocol it belongs to so the driven and Ramsey runs stay distinguishable.
+    data = {}
+    for prefix, curves in (
+        ("driven", qfi),
+        ("Ramsey", ramsey_qfi),
+    ):
+        for subsystem, values in curves.items():
+            data[f"{prefix} F_Q [{subsystem}]"] = (times, values)
+    for prefix, curves in (
+        ("driven", classical_fisher),
+        ("Ramsey", ramsey_classical_fisher),
+    ):
+        for observable, values in curves.items():
+            data[f"{prefix} F_C [{observable}]"] = (times, values)
+    for prefix, curves in (
+        ("driven", spin_expectations),
+        ("Ramsey", ramsey_spin_expectations),
+    ):
+        for observable, values in curves.items():
+            data[f"{prefix} <{observable}>"] = (times, values)
+
     path = save_plot(
         figure,
-        path,
+        system="central_spin",
+        plot_type="driven_vs_ramsey_vs_time",
+        params=asdict(cfg),
+        data=data,
+        name=path.stem,
+        xlabel=r"Interrogation time $t$",
+        ylabel="Fisher information and spin expectations",
+        xunit="1/J",
         metadata={
-            "config": cfg,
-            "time_values": times,
-            "driven_qfi": qfi,
-            "driven_classical_fisher": classical_fisher,
-            "driven_spin_expectations": spin_expectations,
             "driven_spin_fits": spin_fits,
-            "ramsey_qfi": ramsey_qfi,
-            "ramsey_classical_fisher": ramsey_classical_fisher,
-            "ramsey_spin_expectations": ramsey_spin_expectations,
         },
         script_path=__file__,
-        format=cfg.figure_format,
         dpi=cfg.figure_dpi,
         bbox_inches="tight",
     )

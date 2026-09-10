@@ -128,7 +128,7 @@ import argparse
 import json
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, asdict, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -146,6 +146,7 @@ try:
         build_spin_operators,
         central_spin_state,
         coherent_bath_state,
+        PlotRecord,
         qfi_from_rho_and_drho,
         save_plot,
     )
@@ -156,6 +157,7 @@ except ModuleNotFoundError:  # Allow: python CRB/Majorana_visualizer.py
         build_spin_operators,
         central_spin_state,
         coherent_bath_state,
+        PlotRecord,
         qfi_from_rho_and_drho,
         save_plot,
     )
@@ -1166,25 +1168,35 @@ def save_poster_frame(
     figure: plt.Figure,
     times: np.ndarray,
     trajectory: TrajectoryData,
-) -> Path:
+) -> PlotRecord:
     """Save the final rendered frame via the shared metadata-aware saver."""
     filename = animation_output_path(cfg).with_suffix(".png").name
+    # Explorer series are one-dimensional, so the Bloch vector is stored as its
+    # three components and the eigenvalue weights as one series per component.
+    data = {
+        "<sigma_x>": (times, trajectory.bloch_vectors[:, 0]),
+        "<sigma_y>": (times, trajectory.bloch_vectors[:, 1]),
+        "<sigma_z>": (times, trajectory.bloch_vectors[:, 2]),
+        "Central purity": (times, trajectory.central_purity),
+        "Bath purity": (times, trajectory.bath_purity),
+    }
+    for component in range(trajectory.weights.shape[1]):
+        data[f"Bath eigenvalue p_{component}"] = (
+            times,
+            trajectory.weights[:, component],
+        )
+    if trajectory.has_dJ:
+        data["Bath QFI"] = (times, trajectory.bath_qfi)
+
     return save_plot(
         figure,
-        filename,
-        metadata={
-            "config": cfg,
-            "time_values": times,
-            "central_bloch_vectors": trajectory.bloch_vectors,
-            "central_purity": trajectory.central_purity,
-            "bath_purity": trajectory.bath_purity,
-            "majorana_weights": trajectory.weights,
-            **(
-                {"bath_qfi": trajectory.bath_qfi}
-                if trajectory.has_dJ
-                else {}
-            ),
-        },
+        system="central_spin",
+        plot_type="majorana_trajectory",
+        params=asdict(cfg),
+        data=data,
+        name=Path(filename).stem,
+        xlabel=r"Interrogation time $t$",
+        ylabel="Trajectory observables",
         script_path=__file__,
         dpi=cfg.figure_dpi,
     )

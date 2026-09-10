@@ -15,7 +15,7 @@ Changes vs the old sweep script:
   - Coarse time grid; FQ is maximized over t per (Omega/J, N) point.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, asdict, field
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -268,12 +268,31 @@ def plot_results(results, cfg, fname="fq_vs_N_scaling.png"):
     ax3.grid(True, which="both", alpha=0.3)
 
     fig.tight_layout()
+
+    # One explorer series per swept Omega/J ratio, for each of the three
+    # quantities the panels show against N.
+    def ratio_label(ratio):
+        return "undriven" if ratio == 0.0 else f"Omega/J={ratio:g}"
+
+    data = {}
+    for ratio, (N, FQ, ts) in sorted(results.items()):
+        data[f"max_t FQ/t, {ratio_label(ratio)}"] = (N, FQ)
+        data[f"t*, {ratio_label(ratio)}"] = (N, ts)
+        if base is not None and ratio != 0.0:
+            data[f"driven/undriven, {ratio_label(ratio)}"] = (N, FQ / base[1])
+
     path = save_plot(
         fig,
         fname,
+        system="central_spin",
+        plot_type="bath_qfi_rate_vs_N",
+        params=asdict(cfg),
+        data=data,
+        xlabel="N",
+        ylabel=r"$\max_t\, F_Q(t)/t$",
+        xscale="log",
+        yscale="log",
         metadata={
-            "config": cfg,
-            "results": results,
             "fitted_exponents": {
                 ratio: fit_power_law(N, FQ)
                 for ratio, (N, FQ, _) in results.items()

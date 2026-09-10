@@ -22,7 +22,7 @@ with J = 1.  A checkpoint is written after every (omega, Omega) point so a
 long sweep can be resumed by running the script again.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -35,7 +35,7 @@ try:
         fit_power_law,
         optimize_protocol,
     )
-    from CRB.crb_core import save_plot
+    from CRB.crb_core import PlotRecord, save_plot
 except ModuleNotFoundError:  # Allow: python CRB/plot_driven_scaling_exponent_map.py
     from compare_ramsey_driven_vs_N import (
         ComparisonConfig,
@@ -43,7 +43,7 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_driven_scaling_exponent_ma
         fit_power_law,
         optimize_protocol,
     )
-    from crb_core import save_plot
+    from crb_core import PlotRecord, save_plot
 
 
 @dataclass(frozen=True)
@@ -298,7 +298,7 @@ def plot_exponent_map(
     omega_values: np.ndarray,
     Omega_values: np.ndarray,
     cfg: SweepConfig,
-) -> Path:
+) -> PlotRecord:
     """Plot the fitted QCRB scaling exponent over the two drive strengths."""
     exponent = np.ma.masked_invalid(results["exponent"])
     if exponent.count() == 0:
@@ -332,15 +332,29 @@ def plot_exponent_map(
     figure.tight_layout()
 
     figure_path = output_path(cfg.output_figure)
+    # Explorer series are one-dimensional, so the exponent map is stored as one
+    # cut per bath drive: the fitted exponent versus Omega at fixed omega.  The
+    # fit quality travels with it as a matching set of r^2 cuts.
+    data = {}
+    for row, bath_drive in enumerate(omega_values):
+        data[f"exponent, omega={bath_drive:g}"] = (
+            Omega_values,
+            results["exponent"][row],
+        )
+        data[f"r_squared, omega={bath_drive:g}"] = (
+            Omega_values,
+            results["r_squared"][row],
+        )
+
     figure_path = save_plot(
         figure,
-        figure_path,
-        metadata={
-            "config": cfg,
-            "central_drive_values": Omega_values,
-            "bath_drive_values": omega_values,
-            "scaling_exponents": results,
-        },
+        system="central_spin",
+        plot_type="qcrb_scaling_exponent_drive_map",
+        params=asdict(cfg),
+        data=data,
+        name=figure_path.stem,
+        xlabel=r"Central-spin drive $\Omega/J$",
+        ylabel=r"Scaling exponent $p$ in $\mathrm{QCRB}_{\min}\propto N^p$",
         script_path=__file__,
         dpi=200,
         bbox_inches="tight",

@@ -10,8 +10,7 @@ The model and initial state are
 The QFI estimates the coupling ``J`` from the reduced bath state.
 """
 
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, asdict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -21,6 +20,7 @@ try:
         coherent_bath_state,
         compute_bath_qfi_trajectory,
         get_bath_density_matrices,
+        PlotRecord,
         save_plot,
     )
 except ModuleNotFoundError:  # Allow: python CRB/plot_driven_qfi_vs_time.py
@@ -28,6 +28,7 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_driven_qfi_vs_time.py
         coherent_bath_state,
         compute_bath_qfi_trajectory,
         get_bath_density_matrices,
+        PlotRecord,
         save_plot,
     )
 
@@ -90,7 +91,7 @@ def plot_qfi(
     tlist: np.ndarray,
     qfi: np.ndarray,
     cfg: SimulationConfig,
-) -> Path:
+) -> PlotRecord:
     """Plot and save the QFI trajectory."""
     figure, axis = plt.subplots(figsize=(9, 6))
     axis.plot(tlist, qfi, color="tab:blue", linewidth=2.0)
@@ -107,10 +108,12 @@ def plot_qfi(
     output_path = save_plot(
         figure,
         cfg.output_figure,
+        system="central_spin",
+        plot_type="bath_qfi_vs_time",
+        params=asdict(cfg),
+        data={"Bath QFI": (tlist, qfi)},
+        xunit="1/J",
         metadata={
-            "config": cfg,
-            "time_values": tlist,
-            "bath_qfi": qfi,
             "maximum_qfi": qfi[maximum_index],
             "maximum_qfi_time": tlist[maximum_index],
         },
