@@ -65,6 +65,7 @@ try:
         build_spin_operators,
         central_spin_state,
         coherent_bath_state,
+        GOOGLE_DRIVE_GRAPHS_DIRECTORY,
         PlotRecord,
         save_plot,
     )
@@ -74,9 +75,14 @@ except ModuleNotFoundError:  # Allow: python CRB/state_visualizer.py
         build_spin_operators,
         central_spin_state,
         coherent_bath_state,
+        GOOGLE_DRIVE_GRAPHS_DIRECTORY,
         PlotRecord,
         save_plot,
     )
+
+
+PLOT_SYSTEM = "central_spin"
+PLOT_TYPE = "bloch_trajectory"
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +143,7 @@ class SimulationConfig:
 
     # --- Outputs ---
     show_animation: bool = False
-    save_animation: bool = True  # write the animation to graphs/ on every run
+    save_animation: bool = True  # write to Google Drive/PhD/Graphs on every run
     animation_format: str = "gif"  # "gif" (Pillow) or "mp4" (ffmpeg)
     animation_filename: str = ""  # empty -> auto-generated from parameters
     save_poster_frame: bool = False  # also save one frame via crb_core.save_plot
@@ -464,8 +470,8 @@ def _format_number(value: float | int) -> str:
 
 
 def animation_output_path(cfg: SimulationConfig) -> Path:
-    """Return the local file path for a saved animation."""
-    directory = Path(__file__).resolve().parent / "graphs"
+    """Return the Google Drive path for a saved animation."""
+    directory = GOOGLE_DRIVE_GRAPHS_DIRECTORY / PLOT_SYSTEM / PLOT_TYPE
     directory.mkdir(parents=True, exist_ok=True)
     if cfg.animation_filename:
         name = cfg.animation_filename
@@ -525,8 +531,8 @@ def save_poster_frame(
     # three components; the Husimi grids stay in the animation only.
     return save_plot(
         figure,
-        system="central_spin",
-        plot_type="bloch_trajectory",
+        system=PLOT_SYSTEM,
+        plot_type=PLOT_TYPE,
         params=asdict(cfg),
         data={
             "<sigma_x>": (times, trajectory.bloch_vectors[:, 0]),

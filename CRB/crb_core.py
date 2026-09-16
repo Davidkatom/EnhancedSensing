@@ -13,7 +13,7 @@ half in either the drive or collective-spin operators.
 The module also provides the explorer plotting helpers :func:`plot` and
 :func:`save_plot`, which write ``.plot.json`` records -- the canonical
 numerical artifact read by the Graph Viewer -- next to an optional preview
-image.
+image under ``Google Drive/PhD/Graphs/<system>/<plot_type>``.
 """
 
 from __future__ import annotations
@@ -102,7 +102,10 @@ def _metadata_value(value: Any) -> Any:
 
 
 PLOT_SCHEMA_VERSION = 1
-DEFAULT_PLOT_OUTPUT_DIRECTORY = Path("plots")
+# Both the numerical plot-record API and the legacy image-only API share this
+# destination.  Keeping the default tied to the canonical constant prevents a
+# new plotting script from silently falling back to a local ``plots`` folder.
+DEFAULT_PLOT_OUTPUT_DIRECTORY = GOOGLE_DRIVE_GRAPHS_DIRECTORY
 SUPPORTED_AXIS_SCALES = ("linear", "log", "symlog", "logit")
 SUPPORTED_COMPLEX_MODES = ("real", "imag", "abs", "phase")
 
@@ -111,6 +114,27 @@ _COMPLEX_MODE_HINT = "\n".join(
     + [f'  complex_mode="{mode}"' for mode in SUPPORTED_COMPLEX_MODES]
 )
 _GIT_COMMIT_CACHE: dict[str, str | None] = {}
+
+
+def _plot_output_directory(output_dir: str | Path) -> Path:
+    """Resolve a plot destination without allowing it outside Google Drive.
+
+    Relative values are treated as subdirectories of ``PhD/Graphs``.  An
+    absolute value is accepted only when it is already inside that tree.
+    """
+    requested = Path(output_dir)
+    if requested.is_absolute():
+        try:
+            requested.relative_to(GOOGLE_DRIVE_GRAPHS_DIRECTORY)
+        except ValueError as error:
+            raise ValueError(
+                "plot output_dir must be inside "
+                f"{GOOGLE_DRIVE_GRAPHS_DIRECTORY}"
+            ) from error
+        return requested
+    if ".." in requested.parts:
+        raise ValueError("plot output_dir cannot contain '..'")
+    return GOOGLE_DRIVE_GRAPHS_DIRECTORY / requested
 
 
 @dataclass(frozen=True)
@@ -509,6 +533,19 @@ def _sanitize_file_stem(value: str) -> str:
     return cleaned[:80] or "plot"
 
 
+def _plot_record_output_directory(
+    output_dir: str | Path,
+    system: str,
+    plot_type: str,
+) -> Path:
+    """Return ``<Google Drive root>/<system>/<plot_type>`` for a record."""
+    return (
+        _plot_output_directory(output_dir)
+        / _sanitize_file_stem(system)
+        / _sanitize_file_stem(plot_type)
+    )
+
+
 def _allocate_plot_paths(
     output_directory: Path, stem: str, *, reserve_image: bool
 ) -> tuple[str, Path, Path]:
@@ -793,7 +830,7 @@ def plot(
     complex_mode: str | None = None,
     script_path: str | Path | None = None,
 ) -> PlotRecord:
-    """Save numerical plot data as a ``.plot.json`` record plus a preview image.
+    """Save plot data beneath ``PhD/Graphs/<system>/<plot_type>``.
 
     The ``.plot.json`` file is the canonical artifact: keeping the arrays lets
     the viewer take differences, ratios, or maxima later without rerunning the
@@ -821,8 +858,9 @@ def plot(
         yunit: Physical unit recorded for y.
         xscale: One of ``linear``, ``log``, ``symlog``, ``logit``.
         yscale: One of ``linear``, ``log``, ``symlog``, ``logit``.
-        output_dir: Directory for both files, created when missing.  Relative
-            paths resolve against the working directory.
+        output_dir: Google Drive base directory.  Outputs are placed beneath
+            its ``<system>/<plot_type>`` folders.  Absolute paths must already
+            be within ``PhD/Graphs``.
         save_image: Whether to render the optional preview image.
         show: Whether to display the preview figure.
         metadata: Extra provenance, e.g. solver settings or tolerances.
@@ -878,7 +916,11 @@ def plot(
         record_warnings=record_warnings,
     )
 
-    output_directory = Path(output_dir)
+    output_directory = _plot_record_output_directory(
+        output_dir,
+        system,
+        plot_type,
+    )
     output_directory.mkdir(parents=True, exist_ok=True)
     plot_id, json_path, image_path = _allocate_plot_paths(
         output_directory,
@@ -1016,7 +1058,9 @@ def save_plot(
         yunit: Physical unit recorded for y.
         xscale: Recorded x scale.  Defaults to the figure's x scale.
         yscale: Recorded y scale.  Defaults to the figure's y scale.
-        output_dir: Explorer mode: directory for both files.
+        output_dir: Explorer mode: Google Drive base directory.  Outputs are
+            placed beneath its ``<system>/<plot_type>`` folders.  Absolute
+            paths must already be within ``PhD/Graphs``.
         save_image: Explorer mode: whether to save the figure alongside the
             record.
         tags: Free-form labels stored with the record.
@@ -1104,7 +1148,11 @@ def save_plot(
         record_warnings=record_warnings,
     )
 
-    output_directory = Path(output_dir)
+    output_directory = _plot_record_output_directory(
+        output_dir,
+        system,
+        plot_type,
+    )
     output_directory.mkdir(parents=True, exist_ok=True)
     stem = name or (Path(filename).stem if filename is not None else None) or plot_type
     plot_id, json_path, image_path = _allocate_plot_paths(
@@ -1932,6 +1980,7 @@ def fit_power_law(N: np.ndarray, FQ: np.ndarray) -> float:
 
 __all__ = [
     "DEFAULT_PLOT_OUTPUT_DIRECTORY",
+    "GOOGLE_DRIVE_GRAPHS_DIRECTORY",
     "PLOT_SCHEMA_VERSION",
     "PlotRecord",
     "SUPPORTED_AXIS_SCALES",

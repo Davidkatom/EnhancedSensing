@@ -146,6 +146,7 @@ try:
         build_spin_operators,
         central_spin_state,
         coherent_bath_state,
+        GOOGLE_DRIVE_GRAPHS_DIRECTORY,
         PlotRecord,
         qfi_from_rho_and_drho,
         save_plot,
@@ -157,10 +158,15 @@ except ModuleNotFoundError:  # Allow: python CRB/Majorana_visualizer.py
         build_spin_operators,
         central_spin_state,
         coherent_bath_state,
+        GOOGLE_DRIVE_GRAPHS_DIRECTORY,
         PlotRecord,
         qfi_from_rho_and_drho,
         save_plot,
     )
+
+
+PLOT_SYSTEM = "central_spin"
+PLOT_TYPE = "majorana_trajectory"
 
 
 # ---------------------------------------------------------------------------
@@ -1042,8 +1048,8 @@ def _parameter_tag(cfg: SimulationConfig) -> str:
 
 
 def _output_directory() -> Path:
-    """Return (creating if needed) the local ``graphs`` output directory."""
-    directory = Path(__file__).resolve().parent / "graphs"
+    """Return the visualizer's Google Drive graph directory."""
+    directory = GOOGLE_DRIVE_GRAPHS_DIRECTORY / PLOT_SYSTEM / PLOT_TYPE
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
@@ -1190,8 +1196,8 @@ def save_poster_frame(
 
     return save_plot(
         figure,
-        system="central_spin",
-        plot_type="majorana_trajectory",
+        system=PLOT_SYSTEM,
+        plot_type=PLOT_TYPE,
         params=asdict(cfg),
         data=data,
         name=Path(filename).stem,
