@@ -22,9 +22,9 @@ import numpy as np
 import qutip as qt
 
 try:
-    from CRB.crb_core import save_plot
+    from CRB.smart_save import save_plot
 except ModuleNotFoundError:  # Allow: python CRB/qfi_N_scaling.py
-    from crb_core import save_plot
+    from smart_save import save_plot
 
 # ============================================================
 # Configuration

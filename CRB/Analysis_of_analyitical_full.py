@@ -4,9 +4,9 @@ import qutip as qt
 from dataclasses import dataclass, asdict
 
 try:
-    from CRB.crb_core import save_plot
+    from CRB.smart_save import save_plot
 except ModuleNotFoundError:  # Allow: python CRB/Analysis_of_analyitical_full.py
-    from crb_core import save_plot
+    from smart_save import save_plot
 
 
 # ============================================================

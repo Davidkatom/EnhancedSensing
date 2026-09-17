@@ -20,17 +20,15 @@ try:
         coherent_bath_state,
         compute_bath_qfi_trajectory,
         get_bath_density_matrices,
-        PlotRecord,
-        save_plot,
     )
+    from CRB.smart_save import PlotRecord, save_plot
 except ModuleNotFoundError:  # Allow: python CRB/plot_driven_qfi_vs_time.py
     from crb_core import (
         coherent_bath_state,
         compute_bath_qfi_trajectory,
         get_bath_density_matrices,
-        PlotRecord,
-        save_plot,
     )
+    from smart_save import PlotRecord, save_plot
 
 
 @dataclass(frozen=True)

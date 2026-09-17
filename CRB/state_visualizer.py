@@ -65,20 +65,16 @@ try:
         build_spin_operators,
         central_spin_state,
         coherent_bath_state,
-        GOOGLE_DRIVE_GRAPHS_DIRECTORY,
-        PlotRecord,
-        save_plot,
     )
+    from CRB.smart_save import GOOGLE_DRIVE_GRAPHS_DIRECTORY, PlotRecord, save_plot
 except ModuleNotFoundError:  # Allow: python CRB/state_visualizer.py
     from crb_core import (
         build_hamiltonian,
         build_spin_operators,
         central_spin_state,
         coherent_bath_state,
-        GOOGLE_DRIVE_GRAPHS_DIRECTORY,
-        PlotRecord,
-        save_plot,
     )
+    from smart_save import GOOGLE_DRIVE_GRAPHS_DIRECTORY, PlotRecord, save_plot
 
 
 PLOT_SYSTEM = "central_spin"
@@ -146,7 +142,7 @@ class SimulationConfig:
     save_animation: bool = True  # write to Google Drive/PhD/Graphs on every run
     animation_format: str = "gif"  # "gif" (Pillow) or "mp4" (ffmpeg)
     animation_filename: str = ""  # empty -> auto-generated from parameters
-    save_poster_frame: bool = False  # also save one frame via crb_core.save_plot
+    save_poster_frame: bool = False  # also save one frame via smart_save.save_plot
 
 
 def validate_config(cfg: SimulationConfig) -> None:

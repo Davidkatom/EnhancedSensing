@@ -53,10 +53,9 @@ from CRB.crb_core import (  # noqa: E402
     central_spin_state,
     coherent_bath_state,
     observable_projective_fisher,
-    PlotRecord,
     qfi_vectorized,
-    save_plot,
 )
+from CRB.smart_save import PlotRecord, save_plot  # noqa: E402
 
 
 @dataclass(frozen=True, slots=True)

@@ -141,26 +141,30 @@ from scipy.optimize import linear_sum_assignment
 
 try:
     from CRB.crb_core import (
-        _metadata_value,
         build_hamiltonian,
         build_spin_operators,
         central_spin_state,
         coherent_bath_state,
+        qfi_from_rho_and_drho,
+    )
+    from CRB.smart_save import (
         GOOGLE_DRIVE_GRAPHS_DIRECTORY,
         PlotRecord,
-        qfi_from_rho_and_drho,
+        _metadata_value,
         save_plot,
     )
 except ModuleNotFoundError:  # Allow: python CRB/Majorana_visualizer.py
     from crb_core import (
-        _metadata_value,
         build_hamiltonian,
         build_spin_operators,
         central_spin_state,
         coherent_bath_state,
+        qfi_from_rho_and_drho,
+    )
+    from smart_save import (
         GOOGLE_DRIVE_GRAPHS_DIRECTORY,
         PlotRecord,
-        qfi_from_rho_and_drho,
+        _metadata_value,
         save_plot,
     )
 
@@ -301,7 +305,7 @@ class SimulationConfig:
     save_animation: bool = False
     animation_format: str = "gif"  # "gif" (Pillow) or "mp4" (ffmpeg)
     animation_filename: str = ""  # empty -> auto-generated from parameters
-    save_poster_frame: bool = False  # also save one frame via crb_core.save_plot
+    save_poster_frame: bool = False  # also save one frame via smart_save.save_plot
 
 
 def validate_config(cfg: SimulationConfig) -> None:

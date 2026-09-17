@@ -58,10 +58,9 @@ from CRB.OrderAnalysis.plot_phase_cycling import (  # noqa: E402
 from CRB.crb_core import (  # noqa: E402
     build_bath_operators,
     fisher_metric_decomposition,
-    PlotRecord,
     qfi_from_rho_and_drho,
-    save_plot,
 )
+from CRB.smart_save import PlotRecord, save_plot  # noqa: E402
 
 
 @dataclass(frozen=True, slots=True)

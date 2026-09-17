@@ -5,9 +5,9 @@ import numpy as np
 import qutip as qt
 
 try:
-    from CRB.crb_core import save_plot
+    from CRB.smart_save import save_plot
 except ModuleNotFoundError:  # Allow: python CRB/Analysis_of_analyitical_dicky_vs_N.py
-    from crb_core import save_plot
+    from smart_save import save_plot
 
 # ============================================================
 # Configuration

@@ -91,10 +91,9 @@ from CRB.crb_core import (  # noqa: E402
     observable_moment_fisher,
     observable_projective_fisher,
     observable_projective_score,
-    PlotRecord,
     qfi_from_rho_and_drho,
-    save_plot,
 )
+from CRB.smart_save import PlotRecord, save_plot  # noqa: E402
 
 
 @dataclass(frozen=True, slots=True)

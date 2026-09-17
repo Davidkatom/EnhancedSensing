@@ -20,8 +20,8 @@ try:
         observable_moment_fisher,
         observable_projective_fisher,
         qfi_from_rho_and_drho,
-        save_plot,
     )
+    from CRB.smart_save import save_plot
 except ModuleNotFoundError:  # Allow: python CRB/Analysis_of_analyitical_dicky.py
     from crb_core import (
         SimulationConfig as BaseSimulationConfig,
@@ -36,8 +36,8 @@ except ModuleNotFoundError:  # Allow: python CRB/Analysis_of_analyitical_dicky.p
         observable_moment_fisher,
         observable_projective_fisher,
         qfi_from_rho_and_drho,
-        save_plot,
     )
+    from smart_save import save_plot
 
 
 @dataclass(frozen=True)

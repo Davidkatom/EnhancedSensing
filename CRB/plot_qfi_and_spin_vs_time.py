@@ -34,10 +34,9 @@ try:
         central_spin_state,
         coherent_bath_state,
         observable_moment_fisher,
-        PlotRecord,
         qfi_vectorized,
-        save_plot,
     )
+    from CRB.smart_save import PlotRecord, save_plot
 except ModuleNotFoundError:  # Allow: python CRB/plot_qfi_and_spin_vs_time.py
     from crb_core import (
         build_bath_operators,
@@ -45,18 +44,17 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_qfi_and_spin_vs_time.py
         central_spin_state,
         coherent_bath_state,
         observable_moment_fisher,
-        PlotRecord,
         qfi_vectorized,
-        save_plot,
     )
+    from smart_save import PlotRecord, save_plot
 
 
 @dataclass(frozen=True, slots=True)
 class SimulationConfig:
     """Physics, sampling, fitting, and visualization parameters."""
 
-    N: int = 15
-    Omega: float = 1.5
+    N: int = 30
+    Omega: float = 4
     omega: float = 1
     J_nominal: float = 1.0
     dJ: float = 1e-3
@@ -64,12 +62,12 @@ class SimulationConfig:
 
 
     t_min: float = 0.0
-    t_max: float = 3
+    t_max: float = 2
     n_steps: int = 401
 
     central_theta_rad: float = np.pi / 2.0
     central_phi_rad: float = 0.0
-    bath_theta_rad: float = np.pi/2
+    bath_theta_rad: float = 0
     bath_phi_rad: float = 0.0
 
     ramsey_Omega: float = 0.0

@@ -44,19 +44,17 @@ try:
         build_bath_operators,
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
-        PlotRecord,
         qfi_vectorized,
-        save_plot,
     )
+    from CRB.smart_save import PlotRecord, save_plot
 except ModuleNotFoundError:  # Allow: python CRB/plot_phase_cycling.py
     from crb_core import (
         build_bath_operators,
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
-        PlotRecord,
         qfi_vectorized,
-        save_plot,
     )
+    from smart_save import PlotRecord, save_plot
 
 
 @dataclass(frozen=True, slots=True)

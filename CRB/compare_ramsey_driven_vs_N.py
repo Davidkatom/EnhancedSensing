@@ -40,10 +40,9 @@ try:
         coherent_bath_state,
         compute_bath_qfi_trajectory,
         get_bath_density_matrices,
-        PlotRecord,
         qfi_from_rho_and_drho,
-        save_plot,
     )
+    from CRB.smart_save import PlotRecord, save_plot
 except ModuleNotFoundError:  # Allow: python CRB/compare_ramsey_driven_vs_N.py
     from crb_core import (
         build_hamiltonian,
@@ -52,10 +51,9 @@ except ModuleNotFoundError:  # Allow: python CRB/compare_ramsey_driven_vs_N.py
         coherent_bath_state,
         compute_bath_qfi_trajectory,
         get_bath_density_matrices,
-        PlotRecord,
         qfi_from_rho_and_drho,
-        save_plot,
     )
+    from smart_save import PlotRecord, save_plot
 
 
 @dataclass(frozen=True)

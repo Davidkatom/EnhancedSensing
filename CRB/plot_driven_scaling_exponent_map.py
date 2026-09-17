@@ -35,7 +35,7 @@ try:
         fit_power_law,
         optimize_protocol,
     )
-    from CRB.crb_core import PlotRecord, save_plot
+    from CRB.smart_save import PlotRecord, save_plot
 except ModuleNotFoundError:  # Allow: python CRB/plot_driven_scaling_exponent_map.py
     from compare_ramsey_driven_vs_N import (
         ComparisonConfig,
@@ -43,7 +43,7 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_driven_scaling_exponent_ma
         fit_power_law,
         optimize_protocol,
     )
-    from crb_core import PlotRecord, save_plot
+    from smart_save import PlotRecord, save_plot
 
 
 @dataclass(frozen=True)

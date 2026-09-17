@@ -47,10 +47,9 @@ from CRB.crb_core import (  # noqa: E402
     build_hamiltonian,
     central_spin_state,
     coherent_bath_state,
-    PlotRecord,
     qfi_vectorized,
-    save_plot,
 )
+from CRB.smart_save import PlotRecord, save_plot  # noqa: E402
 
 
 Spectrum = tuple[np.ndarray, np.ndarray]

@@ -28,25 +28,23 @@ try:
     from CRB.crb_core import (
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
-        PlotRecord,
         qfi_from_rho_and_drho,
-        save_plot,
     )
+    from CRB.smart_save import PlotRecord, save_plot
 except ModuleNotFoundError:  # Allow: python CRB/plot_driven_qfi_map.py
     from crb_core import (
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
-        PlotRecord,
         qfi_from_rho_and_drho,
-        save_plot,
     )
+    from smart_save import PlotRecord, save_plot
 
 
 @dataclass(frozen=True, slots=True)
 class SweepConfig:
     """Physics, numerical, checkpoint, and visualization parameters."""
 
-    N: int = 1
+    N: int = 30
     interrogation_time: float = 2.0
     J_nominal: float = 1.0
     dJ: float = 1e-3
