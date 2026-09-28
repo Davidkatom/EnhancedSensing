@@ -183,11 +183,10 @@ class SimulationConfig:
     """Every physics, sampling, and rendering knob for the visualizer."""
 
     # --- Hamiltonian: H = Omega*sigma_x + J*sigma_z*S_z + omega*S_x ---
-    N: int = 1
-    Omega: float = 0.1 # central-spin drive, coefficient of X = sigma_x
-    omega: float = 1  # collective-bath drive, coefficient of S_x
+    N: int = 15
+    Omega: float = 7.5 # central-spin drive, coefficient of X = sigma_x
+    omega: float = 1.0  # collective-bath drive, coefficient of S_x
     J: float = 1.0 # central-bath coupling, coefficient of Z * S_z
-
     # --- Optional Markovian dissipation on the central spin ---
     # gamma weights a sqrt(gamma) * sigma_z dephasing collapse operator and
     # beta a sqrt(beta) * sigma_x relaxation one, matching crb_core's

@@ -28,6 +28,7 @@ try:
     from CRB.crb_core import (
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
+        get_bath_density_matrices,
         qfi_from_rho_and_drho,
     )
     from CRB.smart_save import PlotRecord, save_plot
@@ -35,6 +36,7 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_driven_qfi_map.py
     from crb_core import (
         coherent_bath_state,
         evolve_bath_density_matrix_noiseless,
+        get_bath_density_matrices,
         qfi_from_rho_and_drho,
     )
     from smart_save import PlotRecord, save_plot
@@ -44,10 +46,11 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_driven_qfi_map.py
 class SweepConfig:
     """Physics, numerical, checkpoint, and visualization parameters."""
 
-    N: int = 30
+    N: int = 15
     interrogation_time: float = 2.0
     J_nominal: float = 1.0
     dJ: float = 1e-3
+    gamma: float = 0.5  # Central-spin dephasing: L = sqrt(gamma) * sigma_z.
 
     drive_min: float = 0.1
     drive_max: float = 5.0
@@ -76,6 +79,8 @@ def validate_config(cfg: SweepConfig) -> None:
         raise ValueError("interrogation_time must be non-negative")
     if cfg.dJ <= 0.0:
         raise ValueError("dJ must be positive")
+    if not np.isfinite(cfg.gamma) or cfg.gamma < 0.0:
+        raise ValueError("gamma must be finite and non-negative")
     if cfg.drive_min < 0.0:
         raise ValueError("drive_min must be non-negative")
     if cfg.drive_max < cfg.drive_min:
@@ -138,6 +143,7 @@ def parameter_tags(cfg: SweepConfig) -> str:
         f"N={cfg.N}",
         f"t={format_number(cfg.interrogation_time)}",
         f"J={format_number(cfg.J_nominal)}",
+        f"gamma={format_number(cfg.gamma)}",
         f"dJ={format_number(cfg.dJ)}",
         (
             f"drive={format_number(cfg.drive_min)}-"
@@ -189,6 +195,8 @@ def load_legacy_checkpoint(
     Omega_values: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """Import the old CRB checkpoint format when all physics data match."""
+    if cfg.gamma != 0.0:
+        return None
     legacy_path = Path(__file__).resolve().parent / "driven_qfi_sweep_N15_t1.npz"
     candidates = (
         legacy_path,
@@ -352,19 +360,23 @@ def qfi_at_drive_pair(
     common = {
         "Omega_0": Omega,
         "omega": omega,
-        "time": cfg.interrogation_time,
         "N": cfg.N,
         "bath_state": bath_state,
         "central_theta": cfg.central_theta_rad,
     }
-    rho_plus = evolve_bath_density_matrix_noiseless(
-        J=cfg.J_nominal + cfg.dJ,
-        **common,
-    )
-    rho_minus = evolve_bath_density_matrix_noiseless(
-        J=cfg.J_nominal - cfg.dJ,
-        **common,
-    )
+
+    def evolve(J: float) -> np.ndarray:
+        if cfg.gamma == 0.0:
+            return evolve_bath_density_matrix_noiseless(
+                J=J, time=cfg.interrogation_time, **common,
+            )
+        return get_bath_density_matrices(
+            J=J, tlist=[cfg.interrogation_time],
+            gamma=cfg.gamma, beta=0.0, **common,
+        )[0]
+
+    rho_plus = evolve(cfg.J_nominal + cfg.dJ)
+    rho_minus = evolve(cfg.J_nominal - cfg.dJ)
     rho = 0.5 * (rho_plus + rho_minus)
     drho = (rho_plus - rho_minus) / (2.0 * cfg.dJ)
     qfi, _ = qfi_from_rho_and_drho(rho, drho, tol=cfg.qfi_tol)
@@ -476,7 +488,7 @@ def plot_qfi_map(
     axis.set_title(
         "Driven bath-sensing QFI\n"
         rf"$J={cfg.J_nominal:g}$, $N={cfg.N}$, "
-        rf"$t={cfg.interrogation_time:g}$"
+        rf"$t={cfg.interrogation_time:g}$, $\gamma={cfg.gamma:g}$"
     )
     figure.tight_layout()
 
@@ -518,6 +530,7 @@ def parse_config(argv: list[str] | None = None) -> SweepConfig:
     )
     parser.add_argument("--J", dest="J_nominal", type=float, default=defaults.J_nominal)
     parser.add_argument("--dJ", type=float, default=defaults.dJ)
+    parser.add_argument("--gamma", type=float, default=defaults.gamma)
     parser.add_argument("--drive-min", type=float, default=defaults.drive_min)
     parser.add_argument("--drive-max", type=float, default=defaults.drive_max)
     parser.add_argument("--drive-step", type=float, default=defaults.drive_step)

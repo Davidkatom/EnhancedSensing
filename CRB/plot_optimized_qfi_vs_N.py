@@ -19,7 +19,8 @@ Run from the repository root:
     python CRB/plot_optimized_qfi_vs_N.py --Omega-max 10 --show
 
 One figure contains three vertically stacked panels: bath/global QFI, their
-ratio, and optimal Omega versus N. The figure and its Graph Viewer record are
+ratio, and optimal Omega versus N with a sqrt(2*J*N/t) reference curve.
+The figure and its Graph Viewer record are
 saved with smart_save under its Google Drive central_spin folders.
 A results CSV and scan NPZ (including the full
 configuration) are saved under graphs/plot_optimized_qfi_vs_N/. Initial-state
@@ -76,8 +77,8 @@ class OptimizedQFIConfig:
     """Physics, inclusive sweep bounds, numerics, and figure settings."""
 
     N_min: int = 1
-    N_max: int = 50
-    t_max: float = 2.0  # Single evaluation time, in inverse-frequency units.
+    N_max: int = 40
+    t_max: float = 1.0  # Single evaluation time, in inverse-frequency units.
     J_nominal: float = 1.0
     dJ: float = 1e-3
     omega: float = 1.0  # Fixed bath drive, independent of J +/- dJ.
@@ -305,8 +306,18 @@ def plot_results(result: SweepResult, cfg: OptimizedQFIConfig) -> PlotRecord:
     ratio_axis.set_ylim(0, max(1.05, float(finite.max()) * 1.05 if finite.size else 1.05))
     ratio_axis.set_title("(b) Fraction accessible from the bath", loc="left")
 
-    drive_axis.plot(result.N_values, result.Omega_opt, "o-", color="tab:purple")
-    drive_axis.set_ylabel(r"Optimal central drive $\Omega_{\mathrm{opt}}$")
+    # The real-valued reference is undefined at t=0 or for negative J.
+    Omega_reference = (
+        np.sqrt(0.5 * cfg.J_nominal * result.N_values / cfg.t_max)
+        if cfg.t_max > 0.0 and cfg.J_nominal >= 0.0
+        else np.full_like(result.Omega_opt, np.nan)
+    )
+    drive_axis.plot(result.N_values, result.Omega_opt, "o-", color="tab:purple",
+                    label=r"$\Omega_{\mathrm{opt}}$")
+    drive_axis.plot(result.N_values, Omega_reference, "--", color="black",
+                    label=r"$\sqrt{2JN/t}$")
+    drive_axis.set_ylabel(r"Central drive $\Omega$")
+    drive_axis.legend()
     drive_axis.set_ylim(bottom=0)
     drive_axis.set_title(r"(c) Bath-optimal $\Omega$", loc="left")
     drive_axis.set_xlabel(r"Number of bath spins $N$")
@@ -324,6 +335,7 @@ def plot_results(result: SweepResult, cfg: OptimizedQFIConfig) -> PlotRecord:
         "F_Q bath / F_Q global": (result.N_values, result.ratio),
         "Unity": (result.N_values, np.ones_like(result.ratio)),
         "Omega_opt": (result.N_values, result.Omega_opt),
+        "sqrt(2JN/t)": (result.N_values, Omega_reference),
     }
     # smart_save's record format has one set of axis labels; retain the panel
     # grouping explicitly alongside the full combined preview and curve data.
@@ -332,7 +344,7 @@ def plot_results(result: SweepResult, cfg: OptimizedQFIConfig) -> PlotRecord:
         for axis, names in zip(axes, (
             ["F_Q global", "F_Q bath"],
             ["F_Q bath / F_Q global", "Unity"],
-            ["Omega_opt"],
+            ["Omega_opt", "sqrt(2JN/t)"],
         ))
     ]
     name = f"combined__{parameter_tags(cfg)}"

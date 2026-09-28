@@ -1,10 +1,11 @@
 """Compare driven and naive-Ramsey sensing trajectories versus time.
 
-The noiseless driven central-spin model is
+The driven central-spin Hamiltonian is
 
     H = Omega * sigma_x + J * sigma_z * S_z + omega * S_x,
 
-where ``S_i = 2 * jmat(N / 2, i)``.  Quantum Fisher information (QFI) for
+with central-spin dephasing ``L = sqrt(gamma) * sigma_z`` and
+``S_i = 2 * jmat(N / 2, i)``.  Quantum Fisher information (QFI) for
 estimating ``J`` is evaluated by a centered finite difference for the global
 state, reduced bath, and reduced central spin.  The reduced bath also gives
 the classical Fisher information available from the means of ``S_x``,
@@ -31,6 +32,7 @@ try:
     from CRB.crb_core import (
         build_bath_operators,
         build_hamiltonian,
+        build_spin_operators,
         central_spin_state,
         coherent_bath_state,
         observable_moment_fisher,
@@ -41,6 +43,7 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_qfi_and_spin_vs_time.py
     from crb_core import (
         build_bath_operators,
         build_hamiltonian,
+        build_spin_operators,
         central_spin_state,
         coherent_bath_state,
         observable_moment_fisher,
@@ -53,16 +56,17 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_qfi_and_spin_vs_time.py
 class SimulationConfig:
     """Physics, sampling, fitting, and visualization parameters."""
 
-    N: int = 30
-    Omega: float = 4
-    omega: float = 1
+    N: int = 15
+    Omega: float = 2.2
+    omega: float = 3
     J_nominal: float = 1.0
     dJ: float = 1e-3
+    gamma: float = 0.0  # Central-spin dephasing: L = sqrt(gamma) * sigma_z.
 
 
 
     t_min: float = 0.0
-    t_max: float = 2
+    t_max: float = 6.2
     n_steps: int = 401
 
     central_theta_rad: float = np.pi / 2.0
@@ -131,6 +135,7 @@ def validate_config(cfg: SimulationConfig) -> None:
             cfg.omega,
             cfg.J_nominal,
             cfg.dJ,
+            cfg.gamma,
             cfg.t_min,
             cfg.t_max,
             cfg.central_theta_rad,
@@ -152,6 +157,8 @@ def validate_config(cfg: SimulationConfig) -> None:
         raise ValueError("all floating-point configuration values must be finite")
     if cfg.dJ <= 0.0:
         raise ValueError("dJ must be positive")
+    if cfg.gamma < 0.0:
+        raise ValueError("gamma must be non-negative")
     if cfg.t_min < 0.0:
         raise ValueError("t_min must be non-negative")
     if cfg.t_max <= cfg.t_min:
@@ -246,13 +253,43 @@ def evolve_state_vectors(
     return (eigenvectors @ (initial_eigenbasis[:, None] * phases)).T
 
 
+def evolve_states(
+    cfg: SimulationConfig,
+    J: float,
+    times: np.ndarray,
+    protocol: Protocol | None = None,
+) -> np.ndarray:
+    """Return pure-state vectors at zero gamma, otherwise density matrices."""
+    if cfg.gamma == 0.0:
+        return evolve_state_vectors(cfg, J, times, protocol)
+    protocol = driven_protocol(cfg) if protocol is None else protocol
+    prepend_zero = times[0] > 0.0
+    result = qt.mesolve(
+        build_hamiltonian(protocol.Omega, J, cfg.N, omega=protocol.omega),
+        build_initial_state(cfg, protocol),
+        np.concatenate(([0.0], times)) if prepend_zero else times,
+        c_ops=[np.sqrt(cfg.gamma) * build_spin_operators(cfg.N)["sz_s"]],
+        e_ops=[],
+    )
+    states = result.states[1:] if prepend_zero else result.states
+    return np.asarray([state.full() for state in states])
+
+
 def density_matrices(state_vector: np.ndarray, N: int) -> StateReductions:
-    """Trace one pure joint state into global, bath, and central densities."""
+    """Trace a pure or mixed joint state into global and subsystem densities."""
     expected_shape = (2 * (N + 1),)
     state_vector = np.asarray(state_vector, dtype=complex)
+    if state_vector.shape == expected_shape * 2:
+        joint = state_vector.reshape(2, N + 1, 2, N + 1)
+        return StateReductions(
+            global_state=state_vector,
+            bath=np.trace(joint, axis1=0, axis2=2),
+            central=np.trace(joint, axis1=1, axis2=3),
+        )
     if state_vector.shape != expected_shape:
         raise ValueError(
-            f"state_vector must have shape {expected_shape}, got {state_vector.shape}"
+            f"state must have shape {expected_shape} or {expected_shape * 2}, "
+            f"got {state_vector.shape}"
         )
 
     amplitudes = state_vector.reshape(2, N + 1)
@@ -270,13 +307,13 @@ def protocol_fisher_information_trajectories(
     classical_components: tuple[str, ...],
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     """Compute one protocol's quantum and moment-based classical FI."""
-    states_plus = evolve_state_vectors(
+    states_plus = evolve_states(
         cfg,
         cfg.J_nominal + cfg.dJ,
         times,
         protocol,
     )
-    states_minus = evolve_state_vectors(
+    states_minus = evolve_states(
         cfg,
         cfg.J_nominal - cfg.dJ,
         times,
@@ -372,7 +409,7 @@ def spin_expectation_trajectories(
 ) -> dict[str, np.ndarray]:
     """Compute selected nominal collective-bath spin expectations."""
     protocol = driven_protocol(cfg) if protocol is None else protocol
-    states = evolve_state_vectors(cfg, cfg.J_nominal, times, protocol)
+    states = evolve_states(cfg, cfg.J_nominal, times, protocol)
     bath_operators = build_bath_operators(cfg.N)
     available_operators = {
         "Sx": bath_operators["Jx"],
@@ -532,6 +569,7 @@ def parameter_tags(cfg: SimulationConfig) -> str:
         "omega",
         "J_nominal",
         "dJ",
+        "gamma",
         "t_min",
         "t_max",
         "n_steps",
@@ -564,6 +602,7 @@ def parameter_tags(cfg: SimulationConfig) -> str:
 
     tags = (
         f"N={cfg.N}",
+        f"gamma={format_number(cfg.gamma)}",
         (
             f"D=Om{format_number(cfg.Omega)}-om{format_number(cfg.omega)}-"
             f"tc{format_angle(cfg.central_theta_rad)}-"
@@ -780,7 +819,9 @@ def plot_trajectories(
     for axis in (qfi_axis, rate_axis, classical_axis):
         axis.tick_params(labelbottom=False)
     ramsey_information_axis.tick_params(labelbottom=False)
-    figure.suptitle(rf"$N={cfg.N}$, $J={cfg.J_nominal:g}$")
+    figure.suptitle(
+        rf"$N={cfg.N}$, $J={cfg.J_nominal:g}$, $\gamma={cfg.gamma:g}$"
+    )
     figure.subplots_adjust(top=0.93, bottom=0.07, left=0.07, right=0.98)
 
     path = output_path(cfg)
@@ -838,6 +879,7 @@ def parse_config(argv: list[str] | None = None) -> SimulationConfig:
     parser.add_argument("--omega", type=float, default=defaults.omega)
     parser.add_argument("--J", dest="J_nominal", type=float, default=defaults.J_nominal)
     parser.add_argument("--dJ", type=float, default=defaults.dJ)
+    parser.add_argument("--gamma", type=float, default=defaults.gamma)
     parser.add_argument("--t-min", type=float, default=defaults.t_min)
     parser.add_argument("--t-max", type=float, default=defaults.t_max)
     parser.add_argument("--n-steps", type=int, default=defaults.n_steps)
