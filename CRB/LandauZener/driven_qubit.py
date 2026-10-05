@@ -63,7 +63,7 @@ class SimulationConfig:
 
     N: float = 15.0
     Omega: float = 0.6*np.sqrt(N)
-    omega: float = 1.0
+    omega: float = 2.0
     J: float = 1.0
     qfi: str = "J"
     t_pi: float = 1.0

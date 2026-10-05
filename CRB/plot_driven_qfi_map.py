@@ -50,11 +50,11 @@ class SweepConfig:
     interrogation_time: float = 2.0
     J_nominal: float = 1.0
     dJ: float = 1e-3
-    gamma: float = 0.5  # Central-spin dephasing: L = sqrt(gamma) * sigma_z.
+    gamma: float = 0.0  # Central-spin dephasing: L = sqrt(gamma) * sigma_z.
 
     drive_min: float = 0.1
     drive_max: float = 5.0
-    drive_step: float = 0.25
+    drive_step: float = 0.1
 
     central_theta_rad: float = np.pi / 2.0
     bath_theta_rad: float = 0.0

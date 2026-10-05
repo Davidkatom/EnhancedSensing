@@ -58,7 +58,7 @@ class SimulationConfig:
 
     N: int = 15
     Omega: float = 2.2
-    omega: float = 3
+    omega: float = 1
     J_nominal: float = 1.0
     dJ: float = 1e-3
     gamma: float = 0.0  # Central-spin dephasing: L = sqrt(gamma) * sigma_z.
@@ -436,6 +436,31 @@ def spin_expectation_trajectories(
     return expectations
 
 
+def central_spin_expectation_trajectories(
+    cfg: SimulationConfig,
+    times: np.ndarray,
+    protocol: Protocol | None = None,
+) -> dict[str, np.ndarray]:
+    """Compute nominal central-spin Pauli expectations <X>, <Y>, <Z>."""
+    protocol = driven_protocol(cfg) if protocol is None else protocol
+    states = evolve_states(cfg, cfg.J_nominal, times, protocol)
+    paulis = {
+        "X": qt.sigmax().full(),
+        "Y": qt.sigmay().full(),
+        "Z": qt.sigmaz().full(),
+    }
+    expectations = {
+        name: np.empty(len(times), dtype=float) for name in paulis
+    }
+    for index, state in enumerate(states):
+        rho_central = density_matrices(state, cfg.N).central
+        for name, operator in paulis.items():
+            expectations[name][index] = float(
+                np.real(np.trace(rho_central @ operator))
+            )
+    return expectations
+
+
 def fit_fixed_phase_harmonic(
     times: np.ndarray,
     values: np.ndarray,
@@ -656,18 +681,24 @@ def plot_trajectories(
     ramsey_qfi: dict[str, np.ndarray],
     ramsey_classical_fisher: dict[str, np.ndarray],
     ramsey_spin_expectations: dict[str, np.ndarray],
+    central_expectations: dict[str, np.ndarray],
+    ramsey_central_expectations: dict[str, np.ndarray],
     cfg: SimulationConfig,
 ) -> PlotRecord:
     """Plot driven trajectories beside the naive Ramsey comparison."""
     figure = plt.figure(figsize=(cfg.figure_width_in, cfg.figure_height_in))
     grid = figure.add_gridspec(4, 2, hspace=0.08, wspace=0.28)
-    qfi_axis = figure.add_subplot(grid[0, 0])
-    rate_axis = figure.add_subplot(grid[1, 0], sharex=qfi_axis)
-    classical_axis = figure.add_subplot(grid[2, 0], sharex=qfi_axis)
-    spin_axis = figure.add_subplot(grid[3, 0], sharex=qfi_axis)
+    rate_axis = figure.add_subplot(grid[0, 0])
+    classical_axis = figure.add_subplot(grid[1, 0], sharex=rate_axis)
+    spin_axis = figure.add_subplot(grid[2, 0], sharex=rate_axis)
+    central_axis = figure.add_subplot(grid[3, 0], sharex=rate_axis)
     ramsey_information_axis = figure.add_subplot(grid[:2, 1])
     ramsey_spin_axis = figure.add_subplot(
-        grid[2:, 1],
+        grid[2, 1],
+        sharex=ramsey_information_axis,
+    )
+    ramsey_central_axis = figure.add_subplot(
+        grid[3, 1],
         sharex=ramsey_information_axis,
     )
 
@@ -677,7 +708,6 @@ def plot_trajectories(
         "central": r"$F_Q^{\mathrm{central}}$",
     }
     for subsystem, label in subsystem_labels.items():
-        qfi_axis.plot(times, qfi[subsystem], linewidth=2.0, label=label)
         qfi_per_time = np.divide(
             qfi[subsystem],
             times,
@@ -691,16 +721,14 @@ def plot_trajectories(
             label=rf"{label[:-1]}/t$",
         )
 
-    qfi_axis.set_ylabel(r"Quantum Fisher information $F_Q(t)$")
-    qfi_axis.set_title(
+    rate_axis.set_title(
         rf"Driven: $\Omega={cfg.Omega:g}$, $\omega={cfg.omega:g}$, "
         rf"$\theta_c={cfg.central_theta_rad:.3g}$, "
         rf"$\theta_b={cfg.bath_theta_rad:.3g}$"
     )
     rate_axis.set_ylabel(r"QFI rate $F_Q(t)/t$")
-    for axis in (qfi_axis, rate_axis):
-        axis.grid(True, linestyle=":", alpha=0.8)
-        axis.legend()
+    rate_axis.grid(True, linestyle=":", alpha=0.8)
+    rate_axis.legend()
 
     classical_axis.plot(
         times,
@@ -767,30 +795,49 @@ def plot_trajectories(
                 rf"({fit.angular_frequency:.3g}t)$"
             ),
         )
-    spin_axis.set_xlabel(r"Interrogation time $t$")
     spin_axis.set_ylabel("Collective-bath spin expectation")
     spin_axis.grid(True, linestyle=":", alpha=0.8)
     spin_axis.legend()
 
+    for name, values in central_expectations.items():
+        central_axis.plot(
+            times,
+            values,
+            linewidth=1.8,
+            label=rf"$\langle {name}\rangle$",
+        )
+    central_axis.set_xlabel(r"Interrogation time $t$")
+    central_axis.set_ylabel("Central-spin expectation")
+    central_axis.grid(True, linestyle=":", alpha=0.8)
+    central_axis.legend()
+
+    def per_time(values: np.ndarray) -> np.ndarray:
+        return np.divide(
+            values,
+            times,
+            out=np.full_like(values, np.nan),
+            where=times > 0.0,
+        )
+
     ramsey_information_axis.plot(
         times,
-        ramsey_qfi["bath"],
+        per_time(ramsey_qfi["bath"]),
         linewidth=2.0,
-        label=r"$F_Q^{\mathrm{bath}}$",
+        label=r"$F_Q^{\mathrm{bath}}/t$",
     )
     ramsey_information_axis.plot(
         times,
-        ramsey_classical_fisher["Sx"],
+        per_time(ramsey_classical_fisher["Sx"]),
         linewidth=2.0,
-        label=r"$F_C[\langle S_x\rangle]$",
+        label=r"$F_C[\langle S_x\rangle]/t$",
     )
     ramsey_information_axis.plot(
         times,
-        ramsey_classical_fisher["Sy"],
+        per_time(ramsey_classical_fisher["Sy"]),
         linewidth=2.0,
-        label=r"$F_C[\langle S_y\rangle]$",
+        label=r"$F_C[\langle S_y\rangle]/t$",
     )
-    ramsey_information_axis.set_ylabel("Fisher information")
+    ramsey_information_axis.set_ylabel(r"Fisher information rate $F(t)/t$")
     ramsey_information_axis.set_title(
         "Naive Ramsey: "
         rf"$\Omega={cfg.ramsey_Omega:g}$, $\omega={cfg.ramsey_omega:g}$, "
@@ -811,14 +858,26 @@ def plot_trajectories(
         linewidth=2.0,
         label=r"$\langle S_y\rangle$",
     )
-    ramsey_spin_axis.set_xlabel(r"Interrogation time $t$")
     ramsey_spin_axis.set_ylabel("Collective-bath spin expectation")
     ramsey_spin_axis.grid(True, linestyle=":", alpha=0.8)
     ramsey_spin_axis.legend()
 
-    for axis in (qfi_axis, rate_axis, classical_axis):
+    for name, values in ramsey_central_expectations.items():
+        ramsey_central_axis.plot(
+            times,
+            values,
+            linewidth=2.0,
+            label=rf"$\langle {name}\rangle$",
+        )
+    ramsey_central_axis.set_xlabel(r"Interrogation time $t$")
+    ramsey_central_axis.set_ylabel("Central-spin expectation")
+    ramsey_central_axis.grid(True, linestyle=":", alpha=0.8)
+    ramsey_central_axis.legend()
+
+    for axis in (rate_axis, classical_axis, spin_axis):
         axis.tick_params(labelbottom=False)
-    ramsey_information_axis.tick_params(labelbottom=False)
+    for axis in (ramsey_information_axis, ramsey_spin_axis):
+        axis.tick_params(labelbottom=False)
     figure.suptitle(
         rf"$N={cfg.N}$, $J={cfg.J_nominal:g}$, $\gamma={cfg.gamma:g}$"
     )
@@ -846,6 +905,12 @@ def plot_trajectories(
     ):
         for observable, values in curves.items():
             data[f"{prefix} <{observable}>"] = (times, values)
+    for prefix, curves in (
+        ("driven", central_expectations),
+        ("Ramsey", ramsey_central_expectations),
+    ):
+        for observable, values in curves.items():
+            data[f"{prefix} central <{observable}>"] = (times, values)
 
     path = save_plot(
         figure,
@@ -1036,6 +1101,12 @@ def main(argv: list[str] | None = None) -> Path:
         ramsey,
         ("Sx", "Sy"),
     )
+    central_expectations = central_spin_expectation_trajectories(cfg, times)
+    ramsey_central_expectations = central_spin_expectation_trajectories(
+        cfg,
+        times,
+        ramsey,
+    )
     path = plot_trajectories(
         times,
         qfi,
@@ -1045,6 +1116,8 @@ def main(argv: list[str] | None = None) -> Path:
         ramsey_qfi,
         ramsey_classical_fisher,
         ramsey_spin_expectations,
+        central_expectations,
+        ramsey_central_expectations,
         cfg,
     )
     print_summary(
