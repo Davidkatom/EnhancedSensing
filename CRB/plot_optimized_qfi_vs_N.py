@@ -18,8 +18,9 @@ Run from the repository root:
     python CRB/plot_optimized_qfi_vs_N.py
     python CRB/plot_optimized_qfi_vs_N.py --Omega-max 10 --show
 
-One figure contains three vertically stacked panels: bath/global QFI, their
-ratio, and optimal Omega versus N with a sqrt(2*J*N/t) reference curve.
+The single figure is a log-log plot of the driven (Omega-optimized) and naive
+Ramsey bath QFI versus N. N is log-spaced (--N-points; 0 for every integer).
+Global QFI, the ratio and optimal Omega are kept in the CSV/NPZ outputs only.
 The figure and its Graph Viewer record are
 saved with smart_save under its Google Drive central_spin folders.
 A results CSV and scan NPZ (including the full
@@ -54,6 +55,7 @@ try:
         SimulationConfig as TimeConfig,
         driven_protocol,
         protocol_fisher_information_trajectories,
+        ramsey_protocol,
     )
 except ModuleNotFoundError:  # Allow: python CRB/plot_optimized_qfi_vs_N.py
     from crb_core import coherent_bath_state
@@ -69,6 +71,7 @@ except ModuleNotFoundError:  # Allow: python CRB/plot_optimized_qfi_vs_N.py
         SimulationConfig as TimeConfig,
         driven_protocol,
         protocol_fisher_information_trajectories,
+        ramsey_protocol,
     )
 
 
@@ -78,6 +81,7 @@ class OptimizedQFIConfig:
 
     N_min: int = 1
     N_max: int = 40
+    N_points: int = 15  # Log-spaced N values (duplicates merged); 0 = every integer.
     t_max: float = 1.0  # Single evaluation time, in inverse-frequency units.
     J_nominal: float = 1.0
     dJ: float = 1e-3
@@ -91,7 +95,7 @@ class OptimizedQFIConfig:
     bath_theta_rad: float = 0.0
     qfi_tol: float = 1e-12
     figure_width_in: float = 7.0
-    figure_height_in: float = 9.0
+    figure_height_in: float = 5.0
     figure_dpi: int = 160
     figure_format: str = "png"
     show_figure: bool = False
@@ -105,6 +109,7 @@ class SweepResult:
     Omega_opt: np.ndarray
     qfi_bath: np.ndarray
     qfi_global: np.ndarray
+    qfi_ramsey_bath: np.ndarray
     ratio: np.ndarray
     at_boundary: np.ndarray
 
@@ -114,12 +119,14 @@ def validate_config(cfg: OptimizedQFIConfig) -> None:
         value = getattr(cfg, field.name)
         if isinstance(value, (float, int)) and not np.isfinite(value):
             raise ValueError(f"{field.name} must be finite")
-    for name in ("N_min", "N_max", "Omega_points", "maxiter", "figure_dpi"):
+    for name in ("N_min", "N_max", "N_points", "Omega_points", "maxiter", "figure_dpi"):
         value = getattr(cfg, name)
         if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
             raise ValueError(f"{name} must be an integer")
     if not 1 <= cfg.N_min <= cfg.N_max:
         raise ValueError("require 1 <= N_min <= N_max")
+    if cfg.N_points < 0:
+        raise ValueError("N_points must be non-negative")
     if cfg.t_max < 0:
         raise ValueError("t_max must be non-negative")
     if not 0 <= cfg.Omega_min < cfg.Omega_max:
@@ -180,17 +187,29 @@ def optimize_Omega(
     return best_Omega, scan
 
 
+def sweep_N_values(cfg: OptimizedQFIConfig) -> np.ndarray:
+    if cfg.N_points == 0:
+        return np.arange(cfg.N_min, cfg.N_max + 1)
+    log_spaced = np.geomspace(cfg.N_min, cfg.N_max, cfg.N_points)
+    return np.unique(np.rint(log_spaced).astype(int))
+
+
 def qfi_at_optimum(
-    N: int, Omega: float, cfg: OptimizedQFIConfig,
+    N: int, Omega: float, cfg: OptimizedQFIConfig, ramsey: bool = False,
 ) -> tuple[float, float]:
-    """Return bath and global QFI at the same drives and the single time."""
+    """Return bath and global QFI at the same drives and the single time.
+
+    With ``ramsey=True`` the naive Ramsey protocol of plot_qfi_and_spin_vs_time
+    is used instead; it ignores Omega.
+    """
     time_cfg = TimeConfig(
         N=N, Omega=Omega, omega=cfg.omega, J_nominal=cfg.J_nominal,
         dJ=cfg.dJ, t_max=cfg.t_max, central_theta_rad=cfg.central_theta_rad,
         bath_theta_rad=cfg.bath_theta_rad, qfi_tol=cfg.qfi_tol,
     )
     qfi, _ = protocol_fisher_information_trajectories(
-        time_cfg, np.asarray([cfg.t_max]), driven_protocol(time_cfg),
+        time_cfg, np.asarray([cfg.t_max]),
+        ramsey_protocol(time_cfg) if ramsey else driven_protocol(time_cfg),
         classical_components=(),
     )
     bath, global_qfi = float(qfi["bath"][0]), float(qfi["global"][0])
@@ -201,35 +220,37 @@ def qfi_at_optimum(
 
 def run_sweep(cfg: OptimizedQFIConfig) -> SweepResult:
     validate_config(cfg)
-    N_values = np.arange(cfg.N_min, cfg.N_max + 1)
+    N_values = sweep_N_values(cfg)
     Omega_grid = np.linspace(cfg.Omega_min, cfg.Omega_max, cfg.Omega_points)
     scans = np.empty((len(N_values), len(Omega_grid)))
-    optima, bath, global_qfi = np.empty((3, len(N_values)))
+    optima, bath, global_qfi, ramsey_bath = np.empty((4, len(N_values)))
     at_boundary = np.zeros(len(N_values), dtype=bool)
     for i, N in enumerate(N_values):
         optima[i], scans[i] = optimize_Omega(int(N), cfg, Omega_grid)
         bath[i], global_qfi[i] = qfi_at_optimum(int(N), optima[i], cfg)
+        ramsey_bath[i], _ = qfi_at_optimum(int(N), optima[i], cfg, ramsey=True)
         at_boundary[i] = min(
             abs(optima[i] - cfg.Omega_min), abs(optima[i] - cfg.Omega_max),
         ) <= cfg.Omega_tol
         suffix = " (at search boundary; consider widening Omega bounds)" if at_boundary[i] else ""
         print(
             f"N={N:2d}: Omega_opt={optima[i]:.8g}, "
-            f"FQ_bath={bath[i]:.8g}, FQ_global={global_qfi[i]:.8g}{suffix}",
+            f"FQ_bath={bath[i]:.8g}, FQ_global={global_qfi[i]:.8g}, "
+            f"FQ_ramsey_bath={ramsey_bath[i]:.8g}{suffix}",
             flush=True,
         )
     # A zero-information experiment has an undefined fraction, not a zero one.
     ratio = np.divide(bath, global_qfi, out=np.full_like(bath, np.nan),
                       where=global_qfi > cfg.qfi_tol)
     return SweepResult(N_values, Omega_grid, scans, optima, bath, global_qfi,
-                       ratio, at_boundary)
+                       ramsey_bath, ratio, at_boundary)
 
 
 def parameter_tags(cfg: OptimizedQFIConfig) -> str:
     """Compact, stable tags covering every configuration field."""
     # Group related fields to keep the default absolute paths below 260 chars.
     groups = (
-        (("N_min", "N_max"), f"N={cfg.N_min}-{cfg.N_max}"),
+        (("N_min", "N_max", "N_points"), f"N={cfg.N_min}-{cfg.N_max}-n{cfg.N_points}"),
         (("t_max",), f"t={format_number(cfg.t_max)}"),
         (("J_nominal",), f"J={format_number(cfg.J_nominal)}"),
         (("dJ",), f"dJ={format_number(cfg.dJ)}"),
@@ -262,9 +283,10 @@ def save_results(result: SweepResult, cfg: OptimizedQFIConfig) -> tuple[Path, Pa
     np.savetxt(
         csv_path,
         np.column_stack((result.N_values, result.Omega_opt, result.qfi_bath,
-                         result.qfi_global, result.ratio, result.at_boundary)),
-        delimiter=",", fmt=("%d", "%.16g", "%.16g", "%.16g", "%.16g", "%d"),
-        header="N,Omega_opt,FQ_bath,FQ_global,FQ_bath_over_global,at_boundary",
+                         result.qfi_global, result.qfi_ramsey_bath, result.ratio,
+                         result.at_boundary)),
+        delimiter=",", fmt=("%d", "%.16g", "%.16g", "%.16g", "%.16g", "%.16g", "%d"),
+        header="N,Omega_opt,FQ_bath,FQ_global,FQ_ramsey_bath,FQ_bath_over_global,at_boundary",
         comments="",
     )
     np.savez_compressed(
@@ -275,7 +297,7 @@ def save_results(result: SweepResult, cfg: OptimizedQFIConfig) -> tuple[Path, Pa
 
 
 def plot_results(result: SweepResult, cfg: OptimizedQFIConfig) -> PlotRecord:
-    """Save one three-panel figure and all its series through smart_save."""
+    """Save the log-log driven-vs-Ramsey bath-QFI figure and its series through smart_save."""
     params = {
         **asdict(cfg),
         "N_values": result.N_values,
@@ -286,79 +308,42 @@ def plot_results(result: SweepResult, cfg: OptimizedQFIConfig) -> PlotRecord:
         rf"$t={cfg.t_max:g}$, $J={cfg.J_nominal:g}$, $\omega={cfg.omega:g}$"
         "\n" + rf"$\Omega$ optimized for bath QFI in [{cfg.Omega_min:g}, {cfg.Omega_max:g}]"
     )
-    figure, axes = plt.subplots(
-        3, 1, sharex=True,
-        figsize=(cfg.figure_width_in, cfg.figure_height_in),
-        layout="constrained",
+    figure, axis = plt.subplots(
+        figsize=(cfg.figure_width_in, cfg.figure_height_in), layout="constrained",
     )
-    qfi_axis, ratio_axis, drive_axis = axes
-    qfi_axis.plot(result.N_values, result.qfi_global, "s-", label=r"$F_Q^{\mathrm{global}}$")
-    qfi_axis.plot(result.N_values, result.qfi_bath, "o-", label=r"$F_Q^{\mathrm{bath}}$")
-    qfi_axis.set_ylabel(r"Quantum Fisher information $F_Q$")
-    qfi_axis.set_ylim(bottom=0)
-    qfi_axis.legend()
-    qfi_axis.set_title("(a) Bath and global QFI", loc="left")
-
-    ratio_axis.plot(result.N_values, result.ratio, "o-", color="tab:green")
-    ratio_axis.axhline(1.0, color="0.5", linestyle="--", linewidth=1)
-    ratio_axis.set_ylabel(r"$F_Q^{\mathrm{bath}} / F_Q^{\mathrm{global}}$")
-    finite = result.ratio[np.isfinite(result.ratio)]
-    ratio_axis.set_ylim(0, max(1.05, float(finite.max()) * 1.05 if finite.size else 1.05))
-    ratio_axis.set_title("(b) Fraction accessible from the bath", loc="left")
-
-    # The real-valued reference is undefined at t=0 or for negative J.
-    Omega_reference = (
-        np.sqrt(0.5 * cfg.J_nominal * result.N_values / cfg.t_max)
-        if cfg.t_max > 0.0 and cfg.J_nominal >= 0.0
-        else np.full_like(result.Omega_opt, np.nan)
-    )
-    drive_axis.plot(result.N_values, result.Omega_opt, "o-", color="tab:purple",
-                    label=r"$\Omega_{\mathrm{opt}}$")
-    drive_axis.plot(result.N_values, Omega_reference, "--", color="black",
-                    label=r"$\sqrt{2JN/t}$")
-    drive_axis.set_ylabel(r"Central drive $\Omega$")
-    drive_axis.legend()
-    drive_axis.set_ylim(bottom=0)
-    drive_axis.set_title(r"(c) Bath-optimal $\Omega$", loc="left")
-    drive_axis.set_xlabel(r"Number of bath spins $N$")
-    tick_indices = np.linspace(
-        0, len(result.N_values) - 1, min(len(result.N_values), 20), dtype=int,
-    )
-    drive_axis.set_xticks(result.N_values[tick_indices])
-    for axis in axes:
-        axis.grid(True, linestyle=":", alpha=0.6)
+    axis.loglog(result.N_values, result.qfi_bath, "o-",
+                label=r"Driven $F_Q^{\mathrm{bath}}$")
+    axis.loglog(result.N_values, result.qfi_ramsey_bath, "o--",
+                label=r"Ramsey $F_Q^{\mathrm{bath}}$")
+    # Landau-Zener-like prediction evaluated at the bath-optimal Omega for each N.
+    lz_P = np.exp(-np.pi * result.Omega_opt**2
+                  / (2.0 * cfg.J_nominal * result.N_values * cfg.omega))
+    lz_qfi = 4.0 * lz_P * (1.0 - lz_P) * result.N_values**2 / cfg.omega**2
+    axis.loglog(result.N_values, lz_qfi, "k:", linewidth=1.8,
+                label=r"$4P(1-P)N^2/\omega^2$, $P=e^{-\pi\Omega^2/(2JN\omega)}$")
+    axis.set_xlabel(r"Number of bath spins $N$")
+    axis.set_ylabel(r"Quantum Fisher information $F_Q$")
+    axis.grid(True, which="both", linestyle=":", alpha=0.6)
+    axis.legend()
+    axis.set_title("(a) Bath QFI, driven vs Ramsey (log-log)", loc="left")
     figure.suptitle(title)
 
     data = {
-        "F_Q global": (result.N_values, result.qfi_global),
         "F_Q bath": (result.N_values, result.qfi_bath),
-        "F_Q bath / F_Q global": (result.N_values, result.ratio),
-        "Unity": (result.N_values, np.ones_like(result.ratio)),
-        "Omega_opt": (result.N_values, result.Omega_opt),
-        "sqrt(2JN/t)": (result.N_values, Omega_reference),
+        "Ramsey F_Q bath": (result.N_values, result.qfi_ramsey_bath),
+        "4P(1-P)N^2/omega^2": (result.N_values, lz_qfi),
     }
-    # smart_save's record format has one set of axis labels; retain the panel
-    # grouping explicitly alongside the full combined preview and curve data.
-    panels = [
-        {"ylabel": axis.get_ylabel(), "series": names}
-        for axis, names in zip(axes, (
-            ["F_Q global", "F_Q bath"],
-            ["F_Q bath / F_Q global", "Unity"],
-            ["Omega_opt", "sqrt(2JN/t)"],
-        ))
-    ]
-    name = f"combined__{parameter_tags(cfg)}"
+    name = f"loglog__{parameter_tags(cfg)}"
     try:
         record = save_plot(
             figure,
             system="central_spin",
-            plot_type="optimized_qfi_summary_vs_N",
+            plot_type="optimized_qfi_loglog_vs_N",
             params=params,
             data=data,
             name=name,
-            xlabel=drive_axis.get_xlabel(),
-            ylabel="QFI, bath/global QFI, and optimal Omega (separate panels)",
-            metadata={"panels": panels},
+            xlabel=axis.get_xlabel(),
+            ylabel=axis.get_ylabel(),
             notes="Omega maximizes bath QFI for each N; global QFI uses the same drives.",
             script_path=__file__,
             dpi=cfg.figure_dpi,
@@ -370,8 +355,7 @@ def plot_results(result: SweepResult, cfg: OptimizedQFIConfig) -> PlotRecord:
             extra_path = save_plot(
                 figure,
                 f"{name}.{cfg.figure_format}",
-                metadata={"parameters": params, "data": data, "panels": panels,
-                          "record": str(record)},
+                metadata={"parameters": params, "data": data, "record": str(record)},
                 script_path=__file__,
                 format=cfg.figure_format,
                 dpi=cfg.figure_dpi,

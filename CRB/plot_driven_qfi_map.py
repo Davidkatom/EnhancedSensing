@@ -47,7 +47,7 @@ class SweepConfig:
     """Physics, numerical, checkpoint, and visualization parameters."""
 
     N: int = 15
-    interrogation_time: float = 2.0
+    interrogation_time: float = 1.0
     J_nominal: float = 1.0
     dJ: float = 1e-3
     gamma: float = 0.0  # Central-spin dephasing: L = sqrt(gamma) * sigma_z.
@@ -454,6 +454,23 @@ def run_sweep(
     return qfi, omega_values, Omega_values, checkpoint_path
 
 
+def report_optimum(
+    qfi: np.ndarray,
+    omega_values: np.ndarray,
+    Omega_values: np.ndarray,
+) -> None:
+    """Print the drive pair that maximizes the QFI."""
+    masked_qfi = np.ma.masked_invalid(qfi)
+    if masked_qfi.count() == 0:
+        raise RuntimeError("No finite QFI values were obtained")
+    i_omega, i_Omega = np.unravel_index(np.argmax(masked_qfi), qfi.shape)
+    print(
+        f"Optimum: Omega={Omega_values[i_Omega]:.6g}, "
+        f"omega={omega_values[i_omega]:.6g}, "
+        f"F_Q={qfi[i_omega, i_Omega]:.6e}"
+    )
+
+
 def plot_qfi_map(
     qfi: np.ndarray,
     omega_values: np.ndarray,
@@ -572,6 +589,7 @@ def main(argv: list[str] | None = None) -> None:
     cfg = parse_config(argv)
     validate_config(cfg)
     qfi, omega_values, Omega_values, checkpoint_path = run_sweep(cfg)
+    report_optimum(qfi, omega_values, Omega_values)
     figure_path = plot_qfi_map(qfi, omega_values, Omega_values, cfg)
     print(f"Saved QFI map to {figure_path}")
     print(f"Saved numerical sweep to {checkpoint_path}")
