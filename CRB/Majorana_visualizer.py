@@ -184,7 +184,7 @@ class SimulationConfig:
 
     # --- Hamiltonian: H = Omega*sigma_x + J*sigma_z*S_z + omega*S_x ---
     N: int = 15
-    Omega: float = 7.5 # central-spin drive, coefficient of X = sigma_x
+    Omega: float = 2.2 # central-spin drive, coefficient of X = sigma_x
     omega: float = 1.0  # collective-bath drive, coefficient of S_x
     J: float = 1.0 # central-bath coupling, coefficient of Z * S_z
     # --- Optional Markovian dissipation on the central spin ---

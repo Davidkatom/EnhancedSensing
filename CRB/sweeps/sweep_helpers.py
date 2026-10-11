@@ -30,6 +30,7 @@ except ModuleNotFoundError:  # Allow: python CRB/sweeps/<script>.py
     from CRB.crb_core import qfi_from_rho_and_drho
 from CRB.plot_driven_qfi_map import bounded_uniform_grid
 from CRB.plot_qfi_and_spin_vs_time import (
+    Protocol,
     SimulationConfig as TimeConfig,
     density_matrices,
     evolve_states,
@@ -97,8 +98,13 @@ def bath_and_global_qfi(
     Omega: float,
     omega: float,
     cfg: DriveSweepConfig,
+    protocol: Protocol | None = None,
 ) -> tuple[float, float]:
-    """Return ``(F_Q_bath, F_Q_global)`` at one drive pair."""
+    """Return ``(F_Q_bath, F_Q_global)`` at one drive pair.
+
+    ``protocol`` overrides the drives and initial states (e.g. the Ramsey
+    benchmark); by default the driven protocol built from ``Omega``/``omega``.
+    """
     time_cfg = TimeConfig(
         N=cfg.N, Omega=Omega, omega=omega, J_nominal=cfg.J_nominal,
         dJ=cfg.dJ, gamma=cfg.gamma, central_theta_rad=cfg.central_theta_rad,
@@ -106,10 +112,10 @@ def bath_and_global_qfi(
     )
     times = np.asarray([cfg.interrogation_time])
     plus = density_matrices(
-        evolve_states(time_cfg, cfg.J_nominal + cfg.dJ, times)[0], cfg.N,
+        evolve_states(time_cfg, cfg.J_nominal + cfg.dJ, times, protocol)[0], cfg.N,
     )
     minus = density_matrices(
-        evolve_states(time_cfg, cfg.J_nominal - cfg.dJ, times)[0], cfg.N,
+        evolve_states(time_cfg, cfg.J_nominal - cfg.dJ, times, protocol)[0], cfg.N,
     )
 
     def qfi(rho_plus: np.ndarray, rho_minus: np.ndarray) -> float:

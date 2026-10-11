@@ -62,18 +62,18 @@ class SimulationConfig:
     """
 
     N: float = 15.0
-    Omega: float = 0.6*np.sqrt(N)
-    omega: float = 2.0
+    Omega: float = 0.664*np.sqrt(N)
+    omega: float = 1.0
     J: float = 1.0
     qfi: str = "J"
-    t_pi: float = 1.0
+    t_pi: float = 1.0/np.pi
     points: int = 2001
     rtol: float = 1e-9
     atol: float = 1e-11
     method: str = "DOP853"
     qfi_tol: float = 1e-10
     cfi_tol: float = 1e-12
-    size: tuple[float, float] = (12.0, 7.0)
+    size: tuple[float, float] = (12.0, 9.0)
     dpi: int = 160
     show: bool = True
 
@@ -195,11 +195,14 @@ def figure_filename(cfg: SimulationConfig) -> str:
 
 def plot_trajectories(cfg: SimulationConfig, trajectories: tuple[Trajectory, Trajectory]) -> PlotRecord:
     """Plot |0> above |+>, with Bloch components left and QFI/CFI right."""
-    figure, axes = plt.subplots(2, 2, figsize=cfg.size, sharex=True, layout="constrained")
+    figure, axes = plt.subplot_mosaic(
+        [["spin0", "qfi0"], ["spin1", "qfi1"], ["energy", "populations"]],
+        figsize=cfg.size, sharex=True, layout="constrained",
+    )
     parameter = {"J": "J", "Omega": r"\Omega", "N": "N", "t": "t"}[cfg.qfi]
     guide_times = np.arange(int(np.floor(2 * cfg.t_pi)) + 1) * (np.pi / 2)
     for row, (label, result) in enumerate(zip(("0", "+"), trajectories)):
-        spin_axis, qfi_axis = axes[row]
+        spin_axis, qfi_axis = axes[f"spin{row}"], axes[f"qfi{row}"]
         for component, name in enumerate(("X", "Y", "Z")):
             spin_axis.plot(result.time, result.bloch[:, component], label=rf"$\langle {name}\rangle$", lw=1.3)
         spin_axis.set(title=rf"Initial state $|{label}\rangle$ — Pauli expectations", ylabel="Expectation value", ylim=(-1.08, 1.08))
@@ -210,14 +213,41 @@ def plot_trajectories(cfg: SimulationConfig, trajectories: tuple[Trajectory, Tra
                           lw=1.2, alpha=0.85, label=rf"CFI $\langle {name}\rangle$")
         qfi_axis.set(title=rf"Initial state $|{label}\rangle$ — QFI and CFI for ${parameter}$",
                      ylabel=rf"Fisher information for ${parameter}$", ylim=(0, None))
-        qfi_axis.legend(loc="upper left", ncol=4, fontsize=9)
-        for axis in axes[row]:
-            axis.grid(True, axis="y", alpha=0.25)
-            for guide_time in guide_times:
-                axis.axvline(guide_time, color="0.4", linestyle="--", linewidth=0.9, alpha=0.65, zorder=0)
-            axis.set_xlim(result.time[0], result.time[-1])
-    for axis in axes[-1]:
+        qfi_axis.set_ylim(0, 1.3 * result.qfi.max())  # headroom for the stacked legend
+        qfi_axis.legend(loc="upper left", ncol=1, fontsize=9)
+
+    # Instantaneous eigenenergies of H(t): E_pm = pm sqrt(Omega^2 + (N J cos(omega t))^2).
+    time = trajectories[0].time
+    energy = np.hypot(cfg.Omega, cfg.N * cfg.J * np.cos(cfg.omega * time))
+    energy_axis = axes["energy"]
+    energy_axis.plot(time, energy, color="tab:red", lw=1.8, label=r"$E_+(t)$")
+    energy_axis.plot(time, -energy, color="tab:blue", lw=1.8, label=r"$E_-(t)$")
+    energy_axis.set(title=r"Instantaneous eigenenergies $E_\pm(t)=\pm\sqrt{\Omega^2+(NJ\cos\omega t)^2}$",
+                    ylabel="Energy", xlabel=r"Time $t$")
+    energy_axis.legend(loc="center", ncol=2)
+
+    # Populations of the instantaneous eigenstates for |+>:
+    # p_pm = (1/2)[1 pm <H(t)>/E(t)], <H(t)> = Omega <X> + N J cos(omega t) <Z>.
+    plus_bloch = trajectories[1].bloch
+    mean_energy = cfg.Omega * plus_bloch[:, 0] + cfg.N * cfg.J * np.cos(cfg.omega * time) * plus_bloch[:, 2]
+    p_plus = 0.5 * (1.0 + mean_energy / energy)
+    p_minus = 0.5 * (1.0 - mean_energy / energy)
+    pop_axis = axes["populations"]
+    pop_axis.plot(time, p_plus, color="tab:red", lw=1.5, label=r"$p_+(t)$")
+    pop_axis.plot(time, p_minus, color="tab:blue", lw=1.5, label=r"$p_-(t)$")
+    pop_axis.set(title=r"Initial state $|+\rangle$ — $p_\pm(t)=\frac{1}{2}[1\pm\langle H\rangle/E]$",
+                 ylabel="Population")
+    pop_axis.set_ylim(-0.02, 1.35)  # headroom for the legend
+    pop_axis.set_yticks(np.linspace(0, 1, 6))  # populations never exceed 1
+    pop_axis.legend(loc="upper left", ncol=1, fontsize=9)
+
+    for axis in axes.values():
         axis.set_xlabel(r"Time $t$")
+        axis.tick_params(labelbottom=True)  # sharex hides these on the upper rows
+        axis.grid(True, axis="y", alpha=0.25)
+        for guide_time in guide_times:
+            axis.axvline(guide_time, color="0.4", linestyle="--", linewidth=0.9, alpha=0.65, zorder=0)
+        axis.set_xlim(time[0], time[-1])
     figure.suptitle(rf"$H(t)=\Omega X + NJ\cos(\omega t)Z$, $\Omega={cfg.Omega:g}$, $\omega={cfg.omega:g}$, $N={cfg.N:g}$, $J={cfg.J:g}$, $\hbar=1$")
 
     # Follow plot_driven_qfi_map: pass every numerical curve explicitly to
@@ -229,6 +259,11 @@ def plot_trajectories(cfg: SimulationConfig, trajectories: tuple[Trajectory, Tra
         data[f"{label}: QFI({cfg.qfi})"] = (result.time, result.qfi)
         for component, name in enumerate(("X", "Y", "Z")):
             data[f"{label}: CFI({cfg.qfi}) <{name}>"] = (result.time, result.cfi[:, component])
+    data["E_+(t)"] = (time, energy)
+    data["E_-(t)"] = (time, -energy)
+    data["|+>: <H(t)>"] = (time, mean_energy)
+    data["|+>: p_+(t)"] = (time, p_plus)
+    data["|+>: p_-(t)"] = (time, p_minus)
 
     try:
         record = save_plot(
@@ -242,8 +277,9 @@ def plot_trajectories(cfg: SimulationConfig, trajectories: tuple[Trajectory, Tra
             ylabel="Pauli expectation value / Fisher information",
             xunit="dimensionless",
             notes=(
-                "2x2 preview: |0> on the top row, |+> on the bottom; "
-                "Pauli expectations on the left, QFI and CFI on the right. "
+                "Top two rows: |0> then |+>, Pauli expectations on the left, QFI and CFI on the right. "
+                "Bottom row: instantaneous eigenenergies E_pm(t) = pm sqrt(Omega^2 + (N J cos(omega t))^2) "
+                "on the left, eigenstate populations p_pm = (1/2)[1 pm <H(t)>/E(t)] for |+> on the right. "
                 "H = Omega X + N J cos(omega t) Z; Pauli matrices; hbar = 1. "
                 "CFI sums (d_parameter p)^2/p over outcomes with p > cfi_tol."
             ),

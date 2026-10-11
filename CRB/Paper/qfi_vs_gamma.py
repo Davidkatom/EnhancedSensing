@@ -1,4 +1,4 @@
-"""Plot bath and global QFI versus central-spin dephasing at N = 15, t = 2.
+"""Plot bath QFI versus central-spin dephasing at N = 15, t = 2.
 
 The estimated parameter is ``J`` in
 
@@ -21,6 +21,7 @@ except ModuleNotFoundError:  # Allow: python CRB/Paper/qfi_vs_gamma.py
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from CRB.sweeps.sweep_helpers import DriveSweepConfig, bath_and_global_qfi
 from CRB.plot_driven_qfi_map import bounded_uniform_grid
+from CRB.plot_qfi_and_spin_vs_time import SimulationConfig as TimeConfig, ramsey_protocol
 from CRB.smart_save import PlotRecord, save_plot
 
 
@@ -42,40 +43,50 @@ class GammaSweepConfig:
     figure_dpi: int = 200
 
 
-def run_sweep(cfg: GammaSweepConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return the gamma grid with bath and global QFI along it."""
+def run_sweep(cfg: GammaSweepConfig) -> tuple[np.ndarray, np.ndarray]:
+    """Return the gamma grid with the driven bath QFI along it."""
     gammas = bounded_uniform_grid(cfg.gamma_min, cfg.gamma_max, cfg.gamma_step)
     base = DriveSweepConfig(N=cfg.N, interrogation_time=cfg.interrogation_time)
     qfi_bath = np.empty(len(gammas))
-    qfi_global = np.empty(len(gammas))
     for i, gamma in enumerate(gammas):
-        qfi_bath[i], qfi_global[i] = bath_and_global_qfi(
+        qfi_bath[i], _ = bath_and_global_qfi(
             cfg.Omega, cfg.omega, replace(base, gamma=float(gamma)),
         )
-        print(
-            f"[{i + 1:4d}/{len(gammas)}] gamma={gamma:.6g}: "
-            f"F_Q_bath={qfi_bath[i]:.6e}, F_Q_global={qfi_global[i]:.6e}"
-        )
-    return gammas, qfi_bath, qfi_global
+        print(f"[{i + 1:4d}/{len(gammas)}] gamma={gamma:.6g}: F_Q_bath={qfi_bath[i]:.6e}")
+    return gammas, qfi_bath
+
+
+def ramsey_bath_qfi(cfg: GammaSweepConfig) -> float:
+    """Bath QFI of the naive-Ramsey benchmark at the same N and time.
+
+    The Ramsey central spin starts in a ``sigma_z`` eigenstate and has no
+    drive, so ``L = sqrt(gamma) * sigma_z`` leaves it untouched: the benchmark
+    is independent of gamma and is evaluated once, without dephasing.
+    """
+    base = DriveSweepConfig(N=cfg.N, interrogation_time=cfg.interrogation_time)
+    qfi, _ = bath_and_global_qfi(
+        cfg.Omega, cfg.omega, base, protocol=ramsey_protocol(TimeConfig()),
+    )
+    return qfi
 
 
 def plot_sweep(
     gammas: np.ndarray,
     qfi_bath: np.ndarray,
-    qfi_global: np.ndarray,
+    qfi_ramsey: float,
     cfg: GammaSweepConfig,
 ) -> PlotRecord:
-    """Plot bath and global QFI versus gamma and save through smart_save."""
+    """Plot bath QFI versus gamma with the Ramsey line and save via smart_save."""
     xlabel = r"Central-spin dephasing $\gamma$"
-    ylabel = r"Quantum Fisher information $F_Q$"
+    ylabel = r"Bath quantum Fisher information $F_Q^{\mathrm{bath}}$"
 
     figure, axis = plt.subplots(figsize=(cfg.figure_width_in, cfg.figure_height_in))
-    axis.plot(gammas, qfi_global, label=r"$F_Q^{\mathrm{global}}$")
-    axis.plot(gammas, qfi_bath, label=r"$F_Q^{\mathrm{bath}}$")
+    axis.plot(gammas, qfi_bath, label="Driven")
+    axis.axhline(qfi_ramsey, color="k", linestyle="--", label="Ramsey benchmark")
     axis.set_xlabel(xlabel)
     axis.set_ylabel(ylabel)
     axis.set_title(
-        "Bath and global QFI versus dephasing\n"
+        "Bath QFI versus dephasing\n"
         rf"$\Omega={cfg.Omega:g}$, $\omega={cfg.omega:g}$, "
         rf"$N={cfg.N}$, $t={cfg.interrogation_time:g}$"
     )
@@ -97,8 +108,8 @@ def plot_sweep(
             "qfi_tol": base.qfi_tol,
         },
         data={
-            "F_Q global": (gammas, qfi_global),
             "F_Q bath": (gammas, qfi_bath),
+            "Ramsey F_Q bath": (gammas, np.full_like(gammas, qfi_ramsey)),
         },
         xlabel=xlabel,
         ylabel=ylabel,
@@ -113,8 +124,10 @@ def plot_sweep(
 
 def main() -> PlotRecord:
     cfg = GammaSweepConfig()
-    gammas, qfi_bath, qfi_global = run_sweep(cfg)
-    figure_path = plot_sweep(gammas, qfi_bath, qfi_global, cfg)
+    gammas, qfi_bath = run_sweep(cfg)
+    qfi_ramsey = ramsey_bath_qfi(cfg)
+    print(f"Ramsey F_Q_bath={qfi_ramsey:.6e}")
+    figure_path = plot_sweep(gammas, qfi_bath, qfi_ramsey, cfg)
     print(f"Saved QFI vs gamma to {figure_path}")
     return figure_path
 
