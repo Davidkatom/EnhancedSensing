@@ -64,19 +64,34 @@ class MomentumTrajectory:
     norm_error: float
 
 
-def simulate_momentum(cfg: MomentumConfig) -> MomentumTrajectory:
-    """Evolve the initial central state times boson vacuum and trace the bath."""
-    nodes, weights = hermgauss(cfg.p_nodes)
-    momenta = np.sqrt(2.0) * nodes
-    weights = weights / np.sqrt(np.pi)
+def simulate_momentum(cfg: MomentumConfig, *, quadrature: tuple[np.ndarray, np.ndarray] | None = None) -> MomentumTrajectory:
+    """Evolve the initial central state times boson vacuum and trace the bath.
+
+    An optional (momenta, weights) quadrature can split the momentum integral
+    at a finite-time impulse boundary. Weights must represent the normalized
+    vacuum momentum measure; cfg.p_nodes selects the default Hermite rule.
+    """
+    if quadrature is None:
+        nodes, weights = hermgauss(cfg.p_nodes)
+        momenta = np.sqrt(2.0) * nodes
+        weights = weights / np.sqrt(np.pi)
+    else:
+        momenta, weights = (np.asarray(values, dtype=float) for values in quadrature)
+        if momenta.ndim != 1 or weights.shape != momenta.shape or momenta.size < 2:
+            raise ValueError("quadrature must contain matching 1D momenta and weights of length >= 2.")
+        if not np.all(np.isfinite(momenta)) or not np.all(np.isfinite(weights)) or np.any(weights < 0):
+            raise ValueError("quadrature momenta and weights must be finite, with non-negative weights.")
+        if not np.isclose(np.sum(weights), 1., rtol=0, atol=1e-8):
+            raise ValueError("quadrature weights must integrate the vacuum measure to 1 within 1e-8.")
+    node_count = momenta.size
     time = np.linspace(0.0, cfg.tmax, cfg.points)
     initial = np.broadcast_to(
-        central_spin_state(cfg.theta, cfg.phi).full().ravel(), (cfg.p_nodes, 2)
+        central_spin_state(cfg.theta, cfg.phi).full().ravel(), (node_count, 2)
     ).copy()
     z_signs = np.array([1.0, -1.0])
 
     def rhs(t: float, flat: np.ndarray) -> np.ndarray:
-        states = flat.reshape(cfg.p_nodes, 2)
+        states = flat.reshape(node_count, 2)
         angle = 2.0 * cfg.omega * t
         field = cfg.J * (
             cfg.N * np.cos(angle) + np.sqrt(cfg.N) * momenta * np.sin(angle)
@@ -89,7 +104,7 @@ def simulate_momentum(cfg: MomentumConfig) -> MomentumTrajectory:
     )
     if not solution.success:
         raise RuntimeError(f"Momentum evolution failed: {solution.message}")
-    states = solution.y.T.reshape(cfg.points, cfg.p_nodes, 2)
+    states = solution.y.T.reshape(cfg.points, node_count, 2)
     norms_squared = np.sum(np.abs(states) ** 2, axis=2)
     norm_error = float(np.max(np.abs(norms_squared - 1.0)))
     states = states / np.sqrt(norms_squared[:, :, None])
